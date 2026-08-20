@@ -1,0 +1,12 @@
+# 本机工作区：设计语料、任务文档、验收记录、临时 DSHC_HOME 一律不入库
+.local/
+
+# 工具本地缓存
+.codegraph/
+
+# DSH Center：本项目零依赖，只挡住工具与站点产物
+node_modules/
+*.tgz
+.DS_Store
+# GitHub Pages 产物由 Actions 现构建（scripts/build-site.mjs），不入库
+_site/
