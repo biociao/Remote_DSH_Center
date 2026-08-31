@@ -32,11 +32,23 @@ const SNIFF_DIRS = '"$HOME/.local/bin" "$HOME/bin" "$HOME/.npm-global/bin" /usr/
 
 // ── §1.1 探测协议 ────────────────────────────────────────────────────────
 
-/** 无注入值，模板为常量。 */
-export function buildProbeScript() {
+/** dshPath=null 保持自动探测；显式路径也要把同目录加入 PATH，供 /usr/bin/env node shebang 使用。 */
+export function buildProbeScript({ dshPath = null } = {}) {
+  const explicit = dshPath === null ? [] : [
+    `DSH_EXPLICIT=${workdirToken(dshPath)}`,
+    'PATH=$(dirname "$DSH_EXPLICIT"):$PATH',
+    'export PATH',
+  ];
+  const dshBin = dshPath === null
+    ? 'echo "DSH_BIN=$(command -v dsh || echo MISSING)"'
+    : 'if [ -x "$DSH_EXPLICIT" ]; then printf "DSH_BIN=%s\\n" "$DSH_EXPLICIT"; else echo "DSH_BIN=MISSING"; fi';
+  const dshVersion = dshPath === null
+    ? 'if command -v dsh >/dev/null 2>&1; then echo "DSH_VERSION=$(dsh --version 2>/dev/null | head -n 1)"; fi'
+    : 'if [ -x "$DSH_EXPLICIT" ]; then echo "DSH_VERSION=$("$DSH_EXPLICIT" --version 2>/dev/null | head -n 1)"; fi';
   return [
-    'echo "DSH_BIN=$(command -v dsh || echo MISSING)"',
-    'if command -v dsh >/dev/null 2>&1; then echo "DSH_VERSION=$(dsh --version 2>/dev/null | head -n 1)"; fi',
+    ...explicit,
+    dshBin,
+    dshVersion,
     'H="${DSH_HOME:-$HOME/.dsh}"',
     "printf 'DSH_HOME=%s\\n' \"$H\"",
     'if [ -d "$H/profiles/web" ]; then echo "PROFILE_WEB=yes"; else echo "PROFILE_WEB=no"; fi',
@@ -109,6 +121,8 @@ export function buildLaunchScript({
     'if [ -z "$DSH" ]; then echo "ERR=no-dsh"; exit 7; fi',
   ] : [
     `DSH=${workdirToken(dshPath)}`,
+    'PATH=$(dirname "$DSH"):$PATH',
+    'export PATH',
     'if [ ! -x "$DSH" ]; then echo "ERR=no-dsh"; exit 7; fi',
   ];
 
