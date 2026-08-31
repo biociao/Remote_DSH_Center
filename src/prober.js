@@ -133,11 +133,11 @@ export function interpretProbe(res, { local = false } = {}) {
  * 「操作收敛到 server」的前提不成立，见 11 §1.3 例外条款）。
  * @returns {Promise<ProbeResult>}
  */
-export async function probeOnce(host, { local = false, timeoutMs, signal } = {}) {
+export async function probeOnce(host, { local = false, timeoutMs, signal, user = null } = {}) {
   const command = buildProbeScript();
   const res = local
     ? await localExec(command, { timeoutMs, signal })
-    : await sshExec(host, command, { timeoutMs, signal });
+    : await sshExec(host, command, { timeoutMs, signal, user });
   return interpretProbe(res, { local });
 }
 
@@ -156,7 +156,7 @@ export async function probeHost(name) {
   return hostQueue(name).run('probe', async (signal) => {
     // 队首才重取 HostView：排队期间 reload 可能已换了配置快照，运输类型只认当前 config。
     const local = store.getHostView(name)?.local === true;
-    const result = await probeOnce(name, { local, signal });
+    const result = await probeOnce(name, { local, signal, user: store.effectiveSshUser(name) });
     applyProbe(name, result);
     return result;
   });

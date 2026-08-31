@@ -194,6 +194,10 @@ export const api = {
   createLocalHost: (name) => call('POST', '/api/hosts/local', {
     body: name === undefined ? {} : { name },
   }),
+  createRemoteHost: (name, { sshUser = null, dshPath = null } = {}) => call('POST', '/api/hosts', {
+    body: { name, sshUser, dshPath },
+  }),
+  removeHosts: (hosts) => call('POST', '/api/hosts/remove', { body: { hosts } }),
   probeHost: (name) => call('POST', `/api/hosts/${enc(name)}/probe`),
   startHost: (name) => call('POST', `/api/hosts/${enc(name)}/start`),
   stopHost: (name) => call('POST', `/api/hosts/${enc(name)}/stop`),
