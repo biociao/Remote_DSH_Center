@@ -200,6 +200,12 @@ export function createStore(preset = {}) {
     settleByPhase(host);
   };
 
+  const removeHost = (name) => {
+    if (!state.hosts.delete(name)) return false;
+    emit('hosts:changed', name);
+    return true;
+  };
+
   /** host-changed 帧：旧 revision 丢弃（13 §3.1 的前端规则）。 */
   const applyHostChanged = (frame) => {
     if (frame.revision <= domainRevisions.hosts) return false;
@@ -370,6 +376,7 @@ export function createStore(preset = {}) {
     mergeActionHosts,
     applySnapshot,
     upsertHost,
+    removeHost,
     applyHostChanged,
     applyConfigChanged,
     appendEvent,
