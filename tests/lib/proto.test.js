@@ -104,6 +104,13 @@ test('§1.1 探测模板逐字一致（含非交互 PATH 与 login-shell 嗅探�
   );
 });
 
+test('§1.1 显式 dshPath 用于探测，并补齐同目录 PATH 供 env shebang 使用', () => {
+  const s = buildProbeScript({ dshPath: '/Users/bot/.brew/bin/dsh' });
+  assert.match(s, /DSH_EXPLICIT='\/Users\/bot\/\.brew\/bin\/dsh'/);
+  assert.match(s, /PATH=\$\(dirname "\$DSH_EXPLICIT"\):\$PATH; export PATH/);
+  assert.match(s, /"\$DSH_EXPLICIT" --version/);
+});
+
 test('§1.2 拉起模板：双层算例逐字一致（12 §2.5）', () => {
   const s = buildLaunchScript({
     logName: 'web-8899.log',
@@ -142,6 +149,7 @@ test('§1.2 显式 dshPath 跳过自动嗅探并校验可执行文件', () => {
   const s = buildLaunchScript({ logName: 'web-8899.log', port: 8899, dshPath: '~/bin/dsh' });
   assert.match(s, /DSH="\$HOME"'\/bin\/dsh'/);
   assert.match(s, /\[ ! -x "\$DSH" \]/);
+  assert.match(s, /PATH=\$\(dirname "\$DSH"\):\$PATH; export PATH/);
   assert.doesNotMatch(s, /command -v dsh/);
   assert.throws(
     () => buildLaunchScript({ logName: 'web-8899.log', port: 8899, dshPath: 'bin/dsh' }),
