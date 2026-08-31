@@ -54,6 +54,27 @@ test('config 不存在 → 出厂默认 + setupCompleted false', async (t) => {
   assert.equal(store.getConfig().manager.port, 7788);
 });
 
+test('createLocalHost 允许多个具名本机实例并保持各自独立配置', async (t) => {
+  const { paths } = fixture(t);
+  await store.init({ pathsOverride: paths });
+
+  const first = store.createLocalHost('local-default');
+  const second = store.createLocalHost('local-dcs');
+  assert.equal(first.local, true);
+  assert.equal(second.local, true);
+  assert.equal(store.getConfig().hosts['local-default'].localPort, null);
+  assert.equal(store.getConfig().hosts['local-dcs'].localPort, null);
+
+  store.updateConfig((draft) => {
+    draft.hosts['local-default'].remoteWebPort = 3080;
+    draft.hosts['local-dcs'].remoteWebPort = 3083;
+    draft.hosts['local-dcs'].inject.extraArgs = ['--profile', 'dcs'];
+  });
+  assert.equal(store.effectiveRemotePort('local-default'), 3080);
+  assert.equal(store.effectiveRemotePort('local-dcs'), 3083);
+  assert.deepEqual(store.getConfig().hosts['local-dcs'].inject.extraArgs, ['--profile', 'dcs']);
+});
+
 test('config 非法 JSON → 拒绝启动（不静默兜底）', async (t) => {
   const { paths } = fixture(t, { config: '{ not json' });
   await assert.rejects(

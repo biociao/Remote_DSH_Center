@@ -624,9 +624,6 @@ export function clearSetupLocalCandidate() {
 export function createLocalHost(name) {
   assertSafeHost(name);
   updateConfig((draft) => {
-    if (Object.values(draft.hosts).some((host) => host?.local === true)) {
-      throw new DshError('LOCAL_HOST_EXISTS', '已经存在本机主机，不能重复添加');
-    }
     if (Object.hasOwn(draft.hosts, name) || sshInfoByName.has(name)) {
       throw new DshError('LOCAL_NAME_CONFLICT', `本机名称 ${name} 已被现有主机或 SSH Host 使用`, {
         host: name,
