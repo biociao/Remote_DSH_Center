@@ -28,6 +28,7 @@ import { buildInstallGuide } from '../install-guide.js';
 
 const LOG_LINES = 200;
 const REMOTE_CONFIG_NOTE = 'dsh Web 在目标主机运行；没有桌面环境也不影响内嵌页面。需要编辑 settings.yaml 时可直接使用下方“dsh 配置文件”编辑器，无需通过 SSH。';
+const LOCAL_PROFILE_NOTE = '本机多 profile：为每个本机实例设置不同 web 端口，并在“追加参数”中分别用两行填写 --profile 和 profile 名称。';
 const DRAFT_FIELDS = ['enabled', 'sshUser', 'dshPath', 'remoteWebPort', 'workdir', 'env', 'extraArgs', 'patches'];
 const SETTINGS_UNKNOWN_CODES = new Set([
   'SSH_TIMEOUT',
@@ -941,13 +942,13 @@ export function createHostDrawer({ store, actions, confirm, setBackgroundInert =
     remotePort.root.querySelector('label').textContent = copy.portLabel;
     probeTitle.textContent = copy.probeTitle;
     logTitle.textContent = copy.logTitle;
-    remoteConfigNote.hidden = host.local === true;
+    remoteConfigNote.hidden = false;
     sshUser.root.hidden = host.local === true;
     sshUser.root.querySelector('label').textContent = host.local ? '' : 'SSH 登录用户';
     sshUser.root.querySelector('.field-hint').textContent = host.local
       ? ''
       : '只填用户名，例如 alice；保存后用于这台主机的全部 SSH、SCP 与隧道连接。';
-    remoteConfigNote.textContent = host.local === true ? '' : REMOTE_CONFIG_NOTE;
+    remoteConfigNote.textContent = host.local === true ? LOCAL_PROFILE_NOTE : REMOTE_CONFIG_NOTE;
 
     const probe = host.probe;
     clear(probeDl);

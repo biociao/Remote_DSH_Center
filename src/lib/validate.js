@@ -209,10 +209,8 @@ const hostsSchema = V.all(
   V.rec(null, hostConfigSchema),
   (value, path, errs) => {
     if (value === null || typeof value !== 'object' || Array.isArray(value)) return;
-    let localCount = 0;
     for (const [name, host] of Object.entries(value)) {
       if (host?.local !== true) continue;
-      localCount += 1;
       if (!SAFE_HOST_RE.test(name) || name.startsWith('-')) {
         fail(errs, `${path}.${name}`, `本机主机名须匹配 ${SAFE_HOST_RE} 且不以 - 开头`);
       }
@@ -220,7 +218,6 @@ const hostsSchema = V.all(
         fail(errs, `${path}.${name}.localPort`, '本机主机的 localPort 必须为 null');
       }
     }
-    if (localCount > 1) fail(errs, path, '最多只能有一个 local:true 主机');
   },
 );
 

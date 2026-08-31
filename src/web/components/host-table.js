@@ -37,11 +37,11 @@ export function createHostTable({ store, actions }) {
     autocomplete: 'off',
     'aria-label': '本机名称（可选）',
   }));
-  const addLocalButton = button('添加本机', {
+  const addLocalButton = button('添加本机实例', {
     onClick: () => actions.addLocalHost(localName.input.value),
   });
   addLocalButton.dataset.act = 'add-local';
-  addLocalButton.setAttribute('aria-label', '添加本机');
+  addLocalButton.setAttribute('aria-label', '添加本机实例');
   const remoteName = field('远端主机', input('text', '', {
     placeholder: '主机名或地址', autocomplete: 'off', 'aria-label': '远端主机',
   }));
@@ -90,8 +90,7 @@ export function createHostTable({ store, actions }) {
     const hosts = store.listHosts();
     for (const name of selected) if (!hosts.some((host) => host.name === name)) selected.delete(name);
     const loaded = store.state.hostsLoaded;
-    const hasLocal = hosts.some((host) => host.local === true);
-    const showAddLocal = loaded && !hasLocal;
+    const showAddLocal = loaded;
     const addLocalDisabled = !showAddLocal || !store.canWrite() || store.isPending('local:create');
     countLabel.textContent = hosts.length > 0 ? `${hosts.length} 台` : '';
     selectAll.checked = hosts.length > 0 && selected.size === hosts.length;

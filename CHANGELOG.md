@@ -20,6 +20,11 @@
 
 ## [Unreleased]
 
+### 新增
+
+- 放开本机单例限制：管理页可添加多个具名本机实例，分别配置 web 端口、`dshPath`、启动目录与
+  `extraArgs`；因此同一台机器可用 `--profile` 加 profile 名称管理多套 dsh web。
+
 - 主机配置正式支持 `dshPath`：可在详情页或 `dshc config set hosts.<主机>.dshPath <路径>` 指定；留空时继续自动查找。
 - 显式 `dshPath` 现在同时用于探测与启动，并把可执行文件所在目录加入该次命令的 PATH，兼容 `/usr/bin/env node` 等 shebang。
 - 管理页支持手动登记远端主机（可同时填写 SSH 用户与 dsh 路径），并可勾选一台或多台批量删除。
