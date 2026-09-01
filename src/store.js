@@ -582,7 +582,7 @@ export function mergeSshHosts(sshHosts, { skipAdding = [] } = {}) {
 
   const added = config.setupCompleted === true
     ? []
-    : sshHosts.filter((h) => !Object.hasOwn(config.hosts, h.name)).map((h) => h.name);
+    : sshHosts.filter((h) => !skipped.has(h.name) && !Object.hasOwn(config.hosts, h.name)).map((h) => h.name);
   if (added.length > 0) {
     updateConfig((draft) => {
       draft.hosts = {

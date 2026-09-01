@@ -8,7 +8,7 @@ import test from 'node:test';
 
 import {
   COMMANDS, EXIT, TERMINAL, UsageError, assertCliSetupLocalIdentities, buildDefaultsPatchFor, buildHostPatchFor,
-  classifyConfigFile, coerceConfigValue, createSseParser, exitCodeFor, formatTable, installGuideLines, parseAdoptionAnswer,
+  classifyConfigFile, coerceConfigValue, createSseParser, exitCodeFor, formatTable, installGuideLines,
   parseArgv, parseIndexSelection, parseSseFrame, persistSetup, resolveHostArg, tailFile, upToDateLines, usageText,
   withLocalCandidate,
 } from '../src/cli.js';
