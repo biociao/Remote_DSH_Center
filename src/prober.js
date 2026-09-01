@@ -169,7 +169,29 @@ export async function probeOnce(host, {
   const res = local
     ? await localExec(command, { timeoutMs, signal })
     : await sshExec(host, command, { timeoutMs, signal, user });
-  return interpretProbe(res, { local });
+  const result = interpretProbe(res, { local });
+  const ambiguous = result.manualInstances.filter((item) => item.port === null);
+  if (ambiguous.length === 0) return result;
+  const portProbe = local
+    ? await localExec(buildManualPortProbeScript(ambiguous.map((item) => item.pid)), { timeoutMs, signal })
+    : await sshExec(host, buildManualPortProbeScript(ambiguous.map((item) => item.pid)), { timeoutMs, signal, user });
+  if (portProbe.code !== 0 || portProbe.timedOut || portProbe.aborted) return result;
+  let ports;
+  try {
+    ports = parseManualPortBlock(
+      parseProtoOutput(portProbe.stdout, { requireDone: 'MANUAL_PORTS_DONE' }).blocks.MANUAL_PORTS ?? '',
+    );
+  } catch {
+    return result;
+  }
+  return {
+    ...result,
+    manualInstances: result.manualInstances.map((item) => (
+      item.port === null && ports.has(item.pid)
+        ? { ...item, port: ports.get(item.pid) }
+        : item
+    )),
+  };
 }
 
 /** 单行 stderr 摘要（长文本不进环形缓冲，11 §7.2）。 */
