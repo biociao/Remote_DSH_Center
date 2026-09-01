@@ -116,9 +116,9 @@ test('§1.1 探测模板逐字一致（含非交互 PATH 与 login-shell 嗅探�
 
 test('§1.1 显式 dshPath 用于探测，并补齐同目录 PATH 供 env shebang 使用', () => {
   const s = buildProbeScript({ dshPath: '/Users/bot/.brew/bin/dsh' });
-  assert.match(s, /DSH_EXPLICIT='\/Users\/bot\/\.brew\/bin\/dsh'/);
-  assert.match(s, /PATH=\$\(dirname "\$DSH_EXPLICIT"\):\$PATH; export PATH/);
-  assert.match(s, /"\$DSH_EXPLICIT" --version/);
+  assert.match(s, /CONFIG_DSH_PATH='\/Users\/bot\/\.brew\/bin\/dsh'/);
+  assert.match(s, /PATH=\$\(dirname "\$CONFIG_DSH_PATH"\):\$PATH; export PATH/);
+  assert.match(s, /RESOLVED_DSH="\$CONFIG_DSH_PATH"/);
 });
 
 test('§1.2 拉起模板：双层算例逐字一致（12 §2.5）', () => {
