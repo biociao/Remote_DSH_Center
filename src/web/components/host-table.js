@@ -15,6 +15,74 @@ import { isHostEnabled } from '../host-rules.js';
 import { field, input } from '../form.js';
 
 const COLUMNS = ['', '主机', '状态', 'dsh', '本机映射', 'PID', '自启', '操作'];
+export const HOST_GROUPS = Object.freeze([
+  Object.freeze({
+    id: 'started',
+    label: '已启动',
+    phases: Object.freeze(['running', 'starting', 'reconnect', 'abnormal', 'degraded', 'crashed']),
+  }),
+  Object.freeze({ id: 'ready', label: '可拉起', phases: Object.freeze(['ready']) }),
+  Object.freeze({
+    id: 'missing-config',
+    label: '缺失配置',
+    phases: Object.freeze(['no_dsh', 'missing-config']),
+  }),
+  Object.freeze({ id: 'unreachable', label: '不可达', phases: Object.freeze(['unreachable', 'unknown']) }),
+  Object.freeze({ id: 'unmanaged', label: '未纳管', phases: Object.freeze([]) }),
+]);
+
+export function hostGroupId(host) {
+  if (!isHostEnabled(host)) return 'unmanaged';
+  if (host?.orphaned === true) return 'unreachable';
+  return HOST_GROUPS.find((group) => group.phases.includes(host?.phase))?.id ?? 'unreachable';
+}
+
+export function groupHostViews(hosts) {
+  const grouped = Object.fromEntries(HOST_GROUPS.map(({ id }) => [id, []]));
+  for (const host of hosts ?? []) grouped[hostGroupId(host)].push(host);
+  return grouped;
+}
+
+function sortValue(host, key) {
+  if (key === 'status') return hostPhaseMeta(host).label;
+  if (key === 'dsh') return host.probe?.dshPath ?? host.probe?.version ?? '';
+  if (key === 'pid') return host.web?.pid ?? Number.POSITIVE_INFINITY;
+  return host.name ?? '';
+}
+
+export function sortHostViews(hosts, key = 'name', direction = 'asc') {
+  const factor = direction === 'desc' ? -1 : 1;
+  return [...hosts].sort((a, b) => {
+    const left = sortValue(a, key);
+    const right = sortValue(b, key);
+    const result = typeof left === 'number' && typeof right === 'number'
+      ? left - right
+      : String(left).localeCompare(String(right));
+    return factor * (result || String(a.name).localeCompare(String(b.name)));
+  });
+}
+
+const COLLAPSE_STORAGE_KEY = 'dshc.host-table.collapsed-groups';
+
+function loadCollapsedGroups() {
+  try {
+    const parsed = JSON.parse(globalThis.localStorage?.getItem(COLLAPSE_STORAGE_KEY) ?? '{}');
+    return new Set(HOST_GROUPS.map(({ id }) => id).filter((id) => parsed?.[id] === true));
+  } catch {
+    return new Set();
+  }
+}
+
+function saveCollapsedGroups(collapsed) {
+  try {
+    globalThis.localStorage?.setItem(
+      COLLAPSE_STORAGE_KEY,
+      JSON.stringify(Object.fromEntries([...collapsed].map((id) => [id, true]))),
+    );
+  } catch {
+    // localStorage 不可用时折叠仍在当前页面内有效
+  }
+}
 
 export function createHostTable({ store, actions }) {
   const tbody = el('tbody');
