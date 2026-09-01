@@ -28,7 +28,7 @@ const remotePath = (rel) => `$HOME/${REMOTE_DIR}/${rel}`;
  * dsh 嗅探目录清单（§1.1 探测与 §1.2 拉起共用同一份，保持「探测能发现 = 拉起够得着」）。
  * $HOME 系目录排在绝对目录之前：先命中先赢。
  */
-const SNIFF_DIRS = '"$HOME/.local/bin" "$HOME/bin" "$HOME/.npm-global/bin" /usr/local/bin /opt/homebrew/bin /snap/bin';
+const SNIFF_DIRS = '"$HOME/.local/bin" "$HOME/bin" "$HOME/.npm-global/bin" /usr/local/bin /usr/bin /usr/sbin /bin /opt/homebrew/bin /snap/bin';
 
 // ── §1.1 探测协议 ────────────────────────────────────────────────────────
 
@@ -124,9 +124,6 @@ export function buildLaunchScript({
 }) {
   assertSafeName(logName);
   const portTok = assertInt(port, { min: 1, max: 65535, allowZero: true });
-  const dshTok = dshPathToken(dshPath);
-  if (!dshTok) throw new DshError('VALIDATION', '拉起协议缺少已解析的 dsh 绝对路径');
-
   let envp = '';
   const envEntries = Object.entries(env);
   if (envEntries.length > 0) {

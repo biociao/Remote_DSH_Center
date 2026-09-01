@@ -44,7 +44,6 @@ const hostConfigView = V.obj({
   local: V.bool(),
   enabled: V.bool(),
   autoStart: V.bool(),
-  dshPath: V.nullable(V.str()),
   localPort: V.nullable(port),
   remoteWebPort: V.nullable(port),
   workdir: workdirView,

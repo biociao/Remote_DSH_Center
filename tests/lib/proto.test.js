@@ -130,7 +130,7 @@ test('§1.2 拉起模板：双层算例逐字一致（12 §2.5）', () => {
 
 test('§1.2 拉起模板使用已解析的绝对 dsh 路径并拒绝相对路径', () => {
   const script = buildLaunchScript({ logName: 'web-8899.log', port: 8899, dshPath: '/opt/dsh/bin/dsh' });
-  assert.match(script, /nohup '\/opt\/dsh\/bin\/dsh' web/);
+  assert.match(script, /DSH='\/opt\/dsh\/bin\/dsh'.*nohup "\$DSH" web/);
   assert.throws(
     () => buildLaunchScript({ logName: 'web-8899.log', port: 8899, dshPath: 'dsh' }),
     (err) => err.code === 'VALIDATION',
