@@ -188,6 +188,8 @@
 | 错误码族与 HTTP 状态映射（VALIDATION/PHASE_CONFLICT/KILL_REFUSED/NOT_FOUND/SETUP_REQUIRED…） | `tests/integration/flows.test.js`、`tests/integration/setup.test.js` |
 | setup 门禁：未初始化时白名单外全 409 | `tests/integration/setup.test.js`、IT-12（页面侧人工） |
 | `POST /api/hosts/local`：缺省 hostname / 自定义名的 201、允许多个具名实例、名称冲突 409、setup gate 拒绝；创建后 HostView 与 SSE 都带 `local:true` | `tests/api.test.js`、`tests/demo-contract.test.js`、`tests/web/hub.test.js`、`tests/web/mount.test.js` |
+| 远端主机管理：`POST /api/hosts` 手动登记（201/重名 409/非法 body 400）、`POST /api/hosts/remove` 批量删除（去重、运行中 409、未知 404 整单拒绝、state 同步清理）、`POST /api/hosts/:name/adopt`（phase 与 body 前置校验、202 受理）、start 遇手动实例回 409 `ADOPTION_AVAILABLE` 并给出候选清单 | `tests/api.test.js`、`tests/store.test.js`、`tests/contract/schemas.js` |
+| 前端主机管理动作：addRemoteHost 空名称零请求、removeHosts 确认取消零请求且确认后同步前端镜像、start 的 `ADOPTION_AVAILABLE` 三向选择（领养 / forceNew 强拉 / 取消） | `tests/web/actions.test.js` |
 | 本机/SSH 身份不可经 host config patch 翻转；setup 只信内置 canonical 本机候选，重跑保留既有身份且拒绝伪装 SSH 主机 | `tests/api.test.js`、`tests/integration/setup.test.js`、`tests/cli.test.js` |
 | setup 模式注入一台本机候选，probe-all 同时覆盖 local 与 ssh；提交后最多一台 local，普通已初始化启动不凭空新增 | `tests/integration/setup.test.js`、`tests/setup-wizard.test.js` |
 

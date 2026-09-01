@@ -173,6 +173,8 @@ export const managerInfo = V.obj({
 
 export const hostConfigPutResponse = V.obj({ host: hostView });
 export const localHostCreateResponse = V.obj({ host: hostView });
+export const remoteHostCreateResponse = V.obj({ host: hostView });
+export const hostsRemoveResponse = V.obj({ removed: V.arr(V.str({ min: 1 })) });
 
 const SETTINGS_CHECKSUM_RE = /^cksum-v1:(0|[1-9][0-9]{0,9}):(0|[1-9][0-9]{0,6})$/u;
 
