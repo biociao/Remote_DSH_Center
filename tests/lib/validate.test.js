@@ -82,7 +82,7 @@ test('configSchema：local 缺省兼容旧配置，true/false 均接受且类型
   assert.match(validate(configSchema, invalid).errors.join(), /expected boolean/);
 });
 
-test('configSchema/setupBodySchema：本机最多一个且 localPort 必须为 null', () => {
+test('configSchema/setupBodySchema：允许多个本机实例，但 localPort 必须为 null', () => {
   const badPort = goodConfig();
   badPort.hosts['gpu-1'].local = true;
   assert.match(validate(configSchema, badPort).errors.join(), /localPort.*null/);
@@ -92,8 +92,8 @@ test('configSchema/setupBodySchema：本机最多一个且 localPort 必须为 n
   duplicate.hosts['gpu-1'].local = true;
   duplicate.hosts['gpu-1'].localPort = null;
   duplicate.hosts.localhost = { ...newHostConfig(), local: true };
-  assert.match(validate(configSchema, duplicate).errors.join(), /最多.*一个.*local:true/);
-  assert.match(validate(setupBodySchema, duplicate).errors.join(), /最多.*一个.*local:true/);
+  assert.equal(validate(configSchema, duplicate).ok, true);
+  assert.equal(validate(setupBodySchema, duplicate).ok, true);
 });
 
 test('configSchema：localPortRange 必须 lo<=hi 且在 1024..65535', () => {
@@ -150,16 +150,24 @@ test('configSchema：workdir 可缺省（旧 config 兼容），给了就必须�
   }
 });
 
-test('configSchema：dshPath 可选但只能是绝对路径', () => {
-  const valid = goodConfig();
-  valid.hosts['gpu-1'].dshPath = '/opt/dsh/bin/dsh';
-  assert.equal(validate(configSchema, valid).ok, true);
+test('configSchema：profile 可缺省，给了必须是合法 dsh profile 名', () => {
+  assert.equal(validate(configSchema, goodConfig()).ok, true, '缺 profile 键不该拦启动');
 
-  for (const value of ['dsh', './dsh', 'relative/path', '/tmp/dsh\n--bad']) {
-    const invalid = goodConfig();
-    invalid.hosts['gpu-1'].dshPath = value;
-    assert.match(validate(configSchema, invalid).errors.join(), /dshPath/);
+  for (const good of [null, 'dcs', 'web', 'tui', 'my.profile_1']) {
+    const ok = goodConfig();
+    ok.hosts['gpu-1'].profile = good;
+    assert.equal(validate(configSchema, ok).ok, true, `应通过：${JSON.stringify(good)}`);
   }
+  for (const bad of ['', '-dcs', '.hidden', 'a b', 'web; rm', 42]) {
+    const no = goodConfig();
+    no.hosts['gpu-1'].profile = bad;
+    assert.equal(validate(configSchema, no).ok, false, `应拒绝：${JSON.stringify(bad)}`);
+  }
+
+  // 配置 patch 也要过同样的 profile 校验
+  assert.equal(validate(hostConfigPatchSchema, { profile: 'dcs' }).ok, true);
+  assert.equal(validate(hostConfigPatchSchema, { profile: null }).ok, true);
+  assert.equal(validate(hostConfigPatchSchema, { profile: '-bad' }).ok, false);
 });
 
 test('stateSchema 宽松模式：允许 12 §4.4 的增补字段', () => {
@@ -277,4 +285,32 @@ test('assertValid 抛 VALIDATION，detail 为逐条错误路径', () => {
     },
   );
   assert.doesNotThrow(() => assertValid(configSchema, goodConfig(), 'x'));
+});
+
+test('configSchema/defaultsPatchSchema 接受 defaults.hostOrder，空的或缺省均合法', () => {
+  const withOrder = goodConfig();
+  withOrder.defaults.hostOrder = ['gpu-z', 'gpu-1'];
+  assert.equal(validate(configSchema, withOrder).ok, true);
+
+  // 缺省 hostOrder（旧配置）仍通过 —— 迁移器会补，契约上可缺
+  assert.equal(validate(configSchema, goodConfig()).ok, true);
+
+  // 空数组 = 字母序，合法
+  const empty = goodConfig();
+  empty.defaults.hostOrder = [];
+  assert.equal(validate(configSchema, empty).ok, true);
+
+  // PUT /api/config/defaults 允许只提交 hostOrder
+  assert.equal(validate(defaultsPatchSchema, { hostOrder: ['gpu-1', 'gpu-2'] }).ok, true);
+});
+
+test('defaults.hostOrder 成员必须是合法主机名', () => {
+  const withBad = goodConfig();
+  withBad.defaults.hostOrder = ['gpu-1', '-bad', 'bad name'];
+  assert.equal(validate(configSchema, withBad).ok, false);
+  assert.match(validate(configSchema, withBad).errors.join(), /hostOrder\[1\]/);
+
+  const notString = goodConfig();
+  notString.defaults.hostOrder = ['gpu-1', 5];
+  assert.match(validate(configSchema, notString).errors.join(), /hostOrder\[1\].*合法主机名/);
 });

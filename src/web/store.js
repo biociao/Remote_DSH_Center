@@ -200,6 +200,12 @@ export function createStore(preset = {}) {
     settleByPhase(host);
   };
 
+  const removeHost = (name) => {
+    if (!state.hosts.delete(name)) return false;
+    emit('hosts:changed', name);
+    return true;
+  };
+
   /** 清理 orphaned 响应的前端镜像；只删除当前仍标记 orphaned 的条目。 */
   const removeHosts = (names) => {
     const removed = [];
@@ -386,6 +392,7 @@ export function createStore(preset = {}) {
     mergeActionHosts,
     applySnapshot,
     upsertHost,
+    removeHost,
     removeHosts,
     applyHostChanged,
     applyConfigChanged,

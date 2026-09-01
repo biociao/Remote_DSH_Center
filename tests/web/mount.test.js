@@ -177,7 +177,7 @@ test('添加本机：名称输入可留空，默认名冲突后可填自定义�
   const nameLabel = card.querySelector('.field label');
   assert.ok(nameInput && addButton && nameLabel, '无本机时应同时显示名称输入与添加按钮');
   assert.equal(nameLabel.getAttribute('for'), nameInput.id, '名称输入必须有显式 label');
-  assert.equal(addButton.getAttribute('aria-label'), '添加本机');
+  assert.equal(addButton.getAttribute('aria-label'), '添加本机实例');
 
   addButton.click();
   await flush();
@@ -193,6 +193,13 @@ test('添加本机：名称输入可留空，默认名冲突后可填自定义�
   const creates = calls.filter((c) => c.path === '/api/hosts/local');
   assert.deepEqual(creates[1].body, { name: 'workstation-local' });
   assert.equal(dom.app.querySelector('.host-table tbody tr[data-host]').dataset.host, 'workstation-local');
+});
+
+test('已有本机时仍显示添加本机实例入口', async (t) => {
+  const { dom } = await mount(t, { hosts: [localHostView('local-default')] });
+  const addButton = dom.app.querySelector('[data-act="add-local"]');
+  assert.equal(addButton.hidden, false);
+  assert.equal(addButton.textContent, '添加本机实例');
 });
 
 test('本机行使用共享状态、提示与直连映射语义', async (t) => {
@@ -251,8 +258,8 @@ test('本机抽屉 badge 复用共享文案，不渗入 SSH/远端措辞', async
   const drawer = dom.app.querySelector('.host-drawer');
   assert.equal(drawer.querySelector('.drawer-badge .phase-badge').textContent, '本机不可用');
   const remoteConfigNote = drawer.querySelector('.remote-config-note');
-  assert.equal(remoteConfigNote.hidden, true);
-  assert.equal(remoteConfigNote.textContent, '', '本机抽屉不应保留远端 headless 操作说明');
+  assert.equal(remoteConfigNote.hidden, false);
+  assert.match(remoteConfigNote.textContent, /本机多 profile.*--profile/);
   assert.doesNotMatch(drawer.textContent, /SSH|远端/);
 });
 
@@ -2187,6 +2194,7 @@ test('dsh Workspace 按钮实时覆盖配置、应用、CWD、连接与可写闸
   for (const [host, message] of cases) {
     es().send('host-changed', { revision, host });
     revision += 1;
+    // eslint-disable-next-line no-await-in-loop -- 每个 case 都要等 SSE 落地后再断言，必须串行
     await flush();
     assert.equal(controls.register.disabled, true);
     assert.match(controls.status.textContent, message);
@@ -2240,6 +2248,7 @@ test('Workspace 登记 pending 阻止重复入口与 close/Esc/scrim，created:f
 
 test('Workspace 登记中主机移除安全关闭；迟到成功/错误不回写 DOM 或泄露 path', async (t) => {
   for (const outcome of ['success', 'error']) {
+    // eslint-disable-next-line no-await-in-loop -- 子用例共享挂载夹具与登记状态，必须串行
     await t.test(outcome, async (st) => {
       const registration = deferred();
       const { app, dom, es } = await mount(st, {
@@ -2420,6 +2429,7 @@ test('dsh 配置 stale 与结果未知均内联提示并保留用户草稿', asy
     { status: 409, code: 'VALIDATION', summary: /请求无效/, notStale: true },
     { status: 500, code: 'PROTO_PARSE', summary: /结果未知.*草稿已保留/ },
   ]) {
+    // eslint-disable-next-line no-await-in-loop -- 子用例共享挂载夹具与草稿状态，必须串行
     await t.test(failure.code, async (st) => {
       let putCount = 0;
       const { dom } = await mount(st, {
@@ -2467,6 +2477,7 @@ test('stale/结果未知后重新加载：旧 dirty 草稿留在只读对照区�
     { status: 409, code: 'SETTINGS_STALE' },
     { status: 500, code: 'PROTO_PARSE' },
   ]) {
+    // eslint-disable-next-line no-await-in-loop -- 子用例共享挂载夹具与草稿状态，必须串行
     await t.test(failure.code, async (st) => {
       let reads = 0;
       let writes = 0;
@@ -3877,4 +3888,44 @@ test('manager 不可达：给可重试的错误页', async (t) => {
   assert.match(skeleton.textContent, /无法连接 manager/);
   assert.ok(skeleton.querySelectorAll('.btn').find((b) => b.textContent === '重试'));
   assert.equal(dom.app.querySelector('.toast-error') !== null, true);
+});
+
+test('拖拽顶部主机标签可重排并持久化到 defaults.hostOrder', async (t) => {
+  const hosts = [running('gpu-1'), running('gpu-2'), running('gpu-3')];
+  const { dom, calls } = await mount(t, {
+    hosts,
+    responder: (req) => {
+      if (req.method === 'PUT' && req.path === '/api/config/defaults') {
+        return {
+          ok: true,
+          status: 200,
+          text: async () => JSON.stringify({
+            defaults: { ...DEFAULTS, hostOrder: req.body.hostOrder ?? [] },
+            manager: { port: MANAGER_INFO.port },
+            restartRequired: false,
+          }),
+        };
+      }
+      return null;
+    },
+  });
+
+  const tabs = () => dom.app.querySelectorAll('.host-tabs .tab');
+  assert.deepEqual([...tabs()].map((n) => n.dataset.host), ['gpu-1', 'gpu-2', 'gpu-3']);
+
+  const first = dom.app.querySelector('.tab[data-host="gpu-1"]');
+  const third = dom.app.querySelector('.tab[data-host="gpu-3"]');
+  const tablist = dom.app.querySelector('.host-tabs');
+
+  first.dispatchEvent({ type: 'dragstart', dataTransfer: { setData() {}, effectAllowed: null } });
+  third.dispatchEvent({ type: 'dragover' });
+  tablist.dispatchEvent({ type: 'drop' });
+  first.dispatchEvent({ type: 'dragend' });
+  await flush();
+
+  const put = calls.find((c) => c.path === '/api/config/defaults' && c.method === 'PUT');
+  assert.ok(put, '拖动后应调用 PUT /api/config/defaults 保存新顺序');
+  assert.deepEqual(put.body.hostOrder, ['gpu-2', 'gpu-1', 'gpu-3']);
+  // 保存成功后 tabbar 按新顺序重渲染
+  assert.deepEqual([...tabs()].map((n) => n.dataset.host), ['gpu-2', 'gpu-1', 'gpu-3']);
 });

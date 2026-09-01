@@ -44,12 +44,14 @@ const hostConfigView = V.obj({
   local: V.bool(),
   enabled: V.bool(),
   autoStart: V.bool(),
-  dshPath: V.nullable(V.str()),
   localPort: V.nullable(port),
   remoteWebPort: V.nullable(port),
   workdir: workdirView,
+  sshUser: V.nullable(V.str({ min: 1 })),
+  dshPath: workdirView,
+  profile: V.nullable(V.str({ min: 1, pattern: /^[A-Za-z0-9][A-Za-z0-9._-]*$/ })),
   inject: injectView,
-}, { optional: ['dshPath'] });
+}, { optional: ['sshUser', 'dshPath', 'profile'] });
 
 export const hostView = V.obj({
   name: V.str({ min: 1 }),
@@ -140,7 +142,9 @@ export const workspaceRegisterResponse = V.obj({
 const defaultsView = V.obj({
   remoteWebPort: port,
   localPortRange: V.tuple([V.int({ min: 1024, max: 65535 }), V.int({ min: 1024, max: 65535 })]),
-});
+  // 顶部主机标签的自定义顺序；缺省（旧配置）时视为字母序，契约上可缺。
+  hostOrder: V.arr(V.str({ min: 1 })),
+}, { optional: ['hostOrder'] });
 
 export const configBody = V.obj({
   configVersion: V.int({ min: 1 }),
@@ -173,6 +177,8 @@ export const managerInfo = V.obj({
 
 export const hostConfigPutResponse = V.obj({ host: hostView });
 export const localHostCreateResponse = V.obj({ host: hostView });
+export const remoteHostCreateResponse = V.obj({ host: hostView });
+export const hostsRemoveResponse = V.obj({ removed: V.arr(V.str({ min: 1 })) });
 
 const SETTINGS_CHECKSUM_RE = /^cksum-v1:(0|[1-9][0-9]{0,9}):(0|[1-9][0-9]{0,6})$/u;
 

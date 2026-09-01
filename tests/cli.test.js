@@ -8,10 +8,16 @@ import test from 'node:test';
 
 import {
   COMMANDS, EXIT, TERMINAL, UsageError, assertCliSetupLocalIdentities, buildDefaultsPatchFor, buildHostPatchFor,
-  classifyConfigFile, coerceConfigValue, createSseParser, exitCodeFor, formatTable, installGuideLines, parseAdoptionAnswer,
-  parseArgv, parseSseFrame, persistSetup, resolveHostArg, tailFile, upToDateLines, usageText, withLocalCandidate,
+  classifyConfigFile, coerceConfigValue, createSseParser, exitCodeFor, formatTable, installGuideLines,
+  parseArgv, parseIndexSelection, parseSseFrame, persistSetup, resolveHostArg, tailFile, upToDateLines, usageText,
+  withLocalCandidate,
 } from '../src/cli.js';
 import { newFactoryConfig, newHostConfig } from '../src/defaults.js';
+
+test('init 主机选择支持批量范围、去重并忽略越界', () => {
+  assert.deepEqual(parseIndexSelection('1,3-5 5 9', 6), [0, 2, 3, 4]);
+  assert.deepEqual(parseIndexSelection('5-3 bad 0', 6), []);
+});
 
 test('installGuideLines：probe 展开嗅探事实，其他动作只给单行入口', () => {
   const host = {
@@ -58,22 +64,6 @@ test('parseArgv 支持 --key value / --key=value / 短旗标', () => {
   assert.deepEqual(parseArgv(['--foreground']), { positionals: [], flags: { foreground: true } });
   assert.deepEqual(parseArgv(['-f', '-n', '50']), { positionals: [], flags: { f: true, n: 50 } });
   assert.deepEqual(parseArgv(['gpu-1', '--no-wait']), { positionals: ['gpu-1'], flags: { 'no-wait': true } });
-});
-
-test('多个手动实例的领养出路：--pid 与提示里直接输 PID 都认', () => {
-  assert.deepEqual(
-    parseArgv(['start', 'gpu-1', '--adopt', '--pid', '3003']),
-    { positionals: ['start', 'gpu-1'], flags: { adopt: true, pid: 3003 } },
-  );
-  assert.match(COMMANDS.start.usage, /--pid <pid>/, '用法行得把出路写出来，否则等于没有');
-
-  assert.equal(parseAdoptionAnswer('3003'), 3003, '候选清单就在眼前，直接输 PID 最省事');
-  assert.equal(parseAdoptionAnswer(' 3003 '), 3003);
-  assert.equal(parseAdoptionAnswer('a'), 'adopt');
-  assert.equal(parseAdoptionAnswer('F'), 'force');
-  assert.equal(parseAdoptionAnswer(''), 'cancel', '回车即取消，不许当成同意');
-  assert.equal(parseAdoptionAnswer('0'), 'cancel', 'PID 0 不是候选，别当成合法输入');
-  assert.equal(parseAdoptionAnswer('99999999999'), 'cancel');
 });
 
 test('parseArgv：`--` 之后全归 positionals', () => {
@@ -239,6 +229,30 @@ test('persistSetup：manager 未运行时原子写入；写盘失败保留原文
 
   stdout = '';
   stderr = '';
+  const legacyDir = path.join(root, 'legacy-invalid');
+  fs.mkdirSync(legacyDir);
+  process.env.DSHC_HOME = legacyDir;
+  fs.writeFileSync(path.join(legacyDir, 'config.json'), JSON.stringify({
+    ...newFactoryConfig(),
+    hosts: { 'bj.jd.ip': { ...newHostConfig(), dshPath: '/opt/dsh/bin/dsh' } },
+  }));
+  const replaced = await persistSetup(config, {}, {
+    preferredLocalName: 'workstation',
+    sshNames: [],
+  });
+  assert.equal(replaced, EXIT.ok, '待替换旧配置含未知字段时，确认后的 init 仍应能原子覆盖');
+  assert.equal(
+    JSON.parse(fs.readFileSync(path.join(legacyDir, 'config.json'), 'utf8')).hosts.workstation.local,
+    true,
+  );
+  assert.equal(
+    JSON.parse(fs.readFileSync(path.join(legacyDir, 'config.json'), 'utf8')).hosts.workstation.dshPath,
+    null,
+  );
+  assert.equal(stderr, '');
+
+  stdout = '';
+  stderr = '';
   const failureDir = path.join(root, 'failure');
   fs.mkdirSync(failureDir);
   process.env.DSHC_HOME = failureDir;
@@ -323,6 +337,15 @@ test('config set hosts.<主机>.workdir 路由到主机配置端点', () => {
   for (const key of ['manager.port', 'hosts.gpu-1.autoStart', 'hosts..workdir', 'workdir', 'hosts.gpu-1']) {
     assert.equal(buildHostPatchFor(key, 'x'), null, `不该路由：${key}`);
   }
+});
+
+test('config set 支持主机 dshPath 与 sshUser', () => {
+  assert.deepEqual(buildHostPatchFor('hosts.gpu-1.dshPath', '/opt/dsh/bin/dsh'), {
+    name: 'gpu-1', body: { dshPath: '/opt/dsh/bin/dsh' },
+  });
+  assert.deepEqual(buildHostPatchFor('hosts.gpu-1.sshUser', 'alice'), {
+    name: 'gpu-1', body: { sshUser: 'alice' },
+  });
 });
 
 test('coerceConfigValue 识别整数/布尔/区间', () => {

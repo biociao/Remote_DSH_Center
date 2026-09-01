@@ -7,7 +7,7 @@
  */
 
 import { DshError } from './errors.js';
-import { assertEnvKey, assertInt, assertSafeName, shq, workdirToken } from './shq.js';
+import { assertEnvKey, assertInt, assertProfileName, assertSafeName, shq, workdirToken } from './shq.js';
 import { REMOTE_DIR } from '../defaults.js';
 
 /** 超时与轮询参数（12 §3 汇总）——集中此处便于调优。 */
@@ -24,10 +24,16 @@ export const PROTO_TIMING = Object.freeze({
 
 const remotePath = (rel) => `$HOME/${REMOTE_DIR}/${rel}`;
 
+/**
+ * dsh 嗅探目录清单（§1.1 探测与 §1.2 拉起共用同一份，保持「探测能发现 = 拉起够得着」）。
+ * $HOME 系目录排在绝对目录之前：先命中先赢。
+ */
+const SNIFF_DIRS = '"$HOME/.local/bin" "$HOME/bin" "$HOME/.npm-global/bin" "$HOME/.canon/node/bin" "$HOME/.canon/bin" /usr/local/bin /usr/bin /usr/sbin /bin /opt/homebrew/bin /snap/bin';
+
 // ── §1.1 探测协议 ────────────────────────────────────────────────────────
 
 function dshPathToken(value) {
-  // 省略仅保留给底层模板兼容调用；manager 的 start 路径总会传入已解析绝对路径。
+  // 省略仅保留给底层模板兼容调用；manager 的 probe 路径总会传入已解析绝对路径或 null。
   if (value === undefined) return 'dsh';
   if (value === null || value === '') return '';
   if (typeof value !== 'string' || !/^\/[^\0\r\n]*$/u.test(value)) {
@@ -36,34 +42,22 @@ function dshPathToken(value) {
   return shq(value);
 }
 
-/** 已解析绝对路径的所在目录；'dsh' 这类兼容形态没有目录可言，返回 null。 */
-function binDir(value) {
-  if (typeof value !== 'string' || !value.startsWith('/')) return null;
-  const cut = value.lastIndexOf('/');
-  return cut <= 0 ? '/' : value.slice(0, cut);
-}
-
-/**
- * 手动 dsh web 扫描（进程表 → RUNNING_DSH_WEB 块）。
- *
- * `dsh` 与 `web` 必须紧挨着：宽模式（`[d]sh.*web`）会把「命令行里同时提到 dsh 和
- * web 的进程」全算成实例——本机探测尤甚，Center 派给其他主机的 `ssh <host> sh -c
- * '<本脚本>'` 原样带着 `command -v dsh` 与 `profiles/web`，于是一轮 14 台的探测能在
- * 本机凭空变出五个「手动实例」，还会让本机的一步拉起变成领养对话框。
- *
- * 真实例的命令行里 `dsh web` 是相邻的两个词（`node /opt/homebrew/bin/dsh web …`）；
- * 拉起脚本里的路径经 shq 加了引号（`'/usr/bin/dsh' web …`），因此在飞的拉起 ssh 也
- * 不会被误命中。`[d]sh` 躲开 grep 自己，`$$` 排掉执行本脚本的那层 shell。
- */
+/** 手动实例只认相邻的 `dsh web`，避免把携带探测脚本文本的 ssh 进程误判为实例。 */
 export const MANUAL_WEB_GREP = '(^|[ /])[d]sh +web( |$)';
 
 export const MANUAL_WEB_SCAN = `ps -eo pid,args | grep -E "${MANUAL_WEB_GREP}" | grep -v "^ *$$ " || true`;
 
-/** 配置路径由 manager 注入，其余候选均在目标 shell 内按优先级解析。 */
+/** 配置路径由 manager 注入，其余候选均在目标 shell 内按优先级解析。
+ *  dshPath=null 保持自动探测；显式路径也要把同目录加入 PATH，供 /usr/bin/env node shebang 使用。 */
 export function buildProbeScript({ dshPath = null } = {}) {
   const configured = dshPathToken(dshPath);
+  const pathPrepend = dshPath === null ? [] : [
+    'PATH=$(dirname "$CONFIG_DSH_PATH"):$PATH',
+    'export PATH',
+  ];
   return [
     `CONFIG_DSH_PATH=${configured}`,
+    ...pathPrepend,
     'PATH_DSH=; if command -v dsh >/dev/null 2>&1; then PATH_DSH=$(command -v dsh 2>/dev/null | head -n 1); case "$PATH_DSH" in /*) ;; *) PATH_DSH=;; esac; fi',
     'H="${DSH_HOME:-$HOME/.dsh}"',
     "printf 'DSH_HOME=%s\\n' \"$H\"",
@@ -73,23 +67,14 @@ export function buildProbeScript({ dshPath = null } = {}) {
     'if command -v timeout >/dev/null 2>&1; then echo "HAS_TIMEOUT=yes"; else echo "HAS_TIMEOUT=no"; fi',
     'SNIFF_PATH=',
     'echo "DSH_SNIFF<<EOF"',
-    // canon 把 dsh 装进自己的 node 前缀（$HOME/.canon/node/bin），既不在非交互 PATH 里，
-    // 也没有 /usr/local/bin 的软链——不扫这两个目录，装好的 pod 会被判成「远端未安装」。
-    'for D in "$HOME/.local/bin" "$HOME/bin" "$HOME/.npm-global/bin" "$HOME/.canon/node/bin" "$HOME/.canon/bin" /usr/local/bin /usr/bin /usr/sbin /bin /opt/homebrew/bin /snap/bin; do if [ -x "$D/dsh" ]; then printf "%s\\n" "$D/dsh"; if [ -z "$SNIFF_PATH" ]; then SNIFF_PATH="$D/dsh"; fi; fi; done',
+    `for D in ${SNIFF_DIRS}; do if [ -x "$D/dsh" ]; then printf "%s\\n" "$D/dsh"; if [ -z "$SNIFF_PATH" ]; then SNIFF_PATH="$D/dsh"; fi; fi; done`,
     'echo "EOF"',
     'LOGIN_DSH=',
     'if command -v timeout >/dev/null 2>&1 && command -v bash >/dev/null 2>&1; then LOGIN_DSH=$(timeout 5 bash -lc \'command -v dsh\' 2>/dev/null | head -n 1); case "$LOGIN_DSH" in /*) ;; *) LOGIN_DSH=;; esac; fi',
-    // 装到交互 rc 里的工具（canon / nvm / asdf…）连 login shell 都看不见：Ubuntu 的
-    // ~/.bashrc 顶部就有「非交互直接 return」的守卫，export PATH 那段在 -lc 下根本不执行。
-    // 交互 rc 可能先打印横幅，故只收绝对路径行并取最后一行（command -v 的输出在最后）。
-    // 上限比 login shell 那次更紧：两次嗅探要挤在同一条 15s 的 ssh 预算里，而慢到 3s
-    // 的交互 rc 已属病态——canon 那类装法上面的目录扫描早就命中了。
     'if [ -z "$LOGIN_DSH" ] && command -v timeout >/dev/null 2>&1 && command -v bash >/dev/null 2>&1; then LOGIN_DSH=$(timeout 3 bash -lic \'command -v dsh\' 2>/dev/null | grep "^/" | tail -n 1); case "$LOGIN_DSH" in /*) ;; *) LOGIN_DSH=;; esac; fi',
     'printf "DSH_SNIFF_LOGIN=%s\\n" "$LOGIN_DSH"',
     'RESOLVED_DSH=; if [ -n "$CONFIG_DSH_PATH" ] && [ -x "$CONFIG_DSH_PATH" ]; then RESOLVED_DSH="$CONFIG_DSH_PATH"; elif [ -n "$PATH_DSH" ] && [ -x "$PATH_DSH" ]; then RESOLVED_DSH="$PATH_DSH"; elif [ -n "$SNIFF_PATH" ]; then RESOLVED_DSH="$SNIFF_PATH"; elif [ -n "$LOGIN_DSH" ] && [ -x "$LOGIN_DSH" ]; then RESOLVED_DSH="$LOGIN_DSH"; fi',
     'echo "DSH_BIN=${RESOLVED_DSH:-MISSING}"',
-    // dsh 是 `#!/usr/bin/env node` 脚本：解释器和它同住一个 bin 目录，而那个目录不在
-    // 非交互 PATH 里。不把它带上，绝对路径调用只会拿到「env: 'node': No such file」。
     'if [ -n "$RESOLVED_DSH" ]; then DSH_DIR="${RESOLVED_DSH%/*}"; echo "DSH_VERSION=$(PATH="${DSH_DIR:-/}:$PATH" "$RESOLVED_DSH" --version 2>/dev/null | head -n 1)"; fi',
     'if [ -z "$SNIFF_PATH" ] && [ -n "$LOGIN_DSH" ]; then SNIFF_PATH="$LOGIN_DSH"; fi',
     'if command -v timeout >/dev/null 2>&1 && [ -n "$SNIFF_PATH" ]; then SNIFF_DIR="${SNIFF_PATH%/*}"; DSH_SNIFF_VERSION=$(PATH="${SNIFF_DIR:-/}:$PATH" timeout 5 "$SNIFF_PATH" --version 2>/dev/null | head -n 1); printf "DSH_SNIFF_VERSION=%s\\n" "$DSH_SNIFF_VERSION"; fi',
@@ -139,17 +124,16 @@ export function parseManualPortBlock(raw) {
 // ── §1.2 拉起协议 ────────────────────────────────────────────────────────
 
 /**
- * @param {{logName:string, port:number|'0', dshPath:string, env?:Record<string,string>,
- *          patchRemoteNames?:string[], extraArgs?:string[], workdir?:string|null}} p
+ * @param {{logName:string, port:number|'0', env?:Record<string,string>,
+ *          patchRemoteNames?:string[], extraArgs?:string[], workdir?:string|null,
+ *          dshPath?:string|null, profile?:string|null}} p
  */
 export function buildLaunchScript({
-  logName, port, dshPath, env = {}, patchRemoteNames = [], extraArgs = [], workdir = null,
+  logName, port, env = {}, patchRemoteNames = [], extraArgs = [], workdir = null, dshPath = null, profile = null,
 }) {
   assertSafeName(logName);
   const portTok = assertInt(port, { min: 1, max: 65535, allowZero: true });
-  const dshTok = dshPathToken(dshPath);
-  if (!dshTok) throw new DshError('VALIDATION', '拉起协议缺少已解析的 dsh 绝对路径');
-
+  if (profile != null && profile !== '') assertProfileName(profile);
   let envp = '';
   const envEntries = Object.entries(env);
   if (envEntries.length > 0) {
@@ -164,7 +148,7 @@ export function buildLaunchScript({
   // 前置语句以 '; ' 连接到 nohup（12 §0：若用 '&&'，`A && B &` 会把整个 AND 列表放入
   // 后台子壳，$! 拿到的是子壳 PID）。'&' 本身即后台化语句与 echo 之间的分隔符——
   // 其后不能再跟 ';'（POSIX 语法错误）。
-  // workdir=null 时整段不生成，模板逐字退回补丁 01 之前的形态（零回归面）。
+  // workdir=null 时 cd 整段不生成（补丁 01 的零回归面口径，回归锁见 proto.test.js）。
   // 落地物路径（日志、patches、--patch 参数）全是 $HOME 绝对形态，cd 影响不到它们。
   const cdStmt = workdir === null
     ? null
@@ -173,23 +157,43 @@ export function buildLaunchScript({
       return `cd -- ${wd} || { echo "ERR=workdir"; printf 'WD=%s\\n' ${wd}; exit 8; }`;
     })();
 
-  // dsh 常常是 `#!/usr/bin/env node` 脚本，解释器与它同住一个 bin 目录（canon 装出来的
-  // $HOME/.canon/node/bin 就是如此），而那个目录不在非交互 SSH 的 PATH 里。交互 shell
-  // 里能跑的命令，在这里只会把「env: 'node': No such file」写进日志然后当场退出。
-  const dshDir = binDir(dshPath);
-  const pathStmt = dshDir === null ? null : `PATH=${shq(dshDir)}:"$PATH"; export PATH`;
+  // dsh 解析段（排在 cd 之后：cd 可能改变相对 PATH 条目的解析结果）。command -v 成功时
+  // 保持字面 `dsh` 不动——argv[0] 不变，ps 指纹维持 `dsh web …` 旧形态（不误杀零回归）；
+  // 失败再退回嗅探目录与 login shell 的绝对路径，此时指纹自然变成 `/abs/path/dsh web …`
+  // （指纹本来就是 ps 实测回采，12 §5.2，形态变化不影响全等判据）。
+  // 都找不到就 ERR=no-dsh + exit 7（占用表：7=no-dsh、8=workdir、9=mkdir）在 nohup 之前
+  // 快败——不再让「nohup: dsh: No such file or directory」埋进日志尾冒充「进程立即退出」。
+  const dshResolve = dshPath === null ? [
+    'DSH=dsh',
+    `if ! command -v dsh >/dev/null 2>&1; then DSH=; for D in ${SNIFF_DIRS}; do if [ -x "$D/dsh" ]; then DSH="$D/dsh"; break; fi; done; fi`,
+    `if [ -z "$DSH" ] && command -v timeout >/dev/null 2>&1 && command -v bash >/dev/null 2>&1; then DSH=$(timeout 5 bash -lc 'command -v dsh' 2>/dev/null | head -n 1); fi`,
+    `if [ -z "$DSH" ] && command -v timeout >/dev/null 2>&1 && command -v bash >/dev/null 2>&1; then DSH=$(timeout 3 bash -lic 'command -v dsh' 2>/dev/null | grep "^/" | tail -n 1); fi`,
+    'if [ -z "$DSH" ]; then echo "ERR=no-dsh"; exit 7; fi',
+  ] : [
+    `DSH=${workdirToken(dshPath)}`,
+    'PATH=$(dirname "$DSH"):$PATH',
+    'export PATH',
+    'if [ ! -x "$DSH" ]; then echo "ERR=no-dsh"; exit 7; fi',
+  ];
 
   const prelude = [
     `mkdir -p "${remotePath('patches')}" || { echo "ERR=mkdir"; exit 9; }`,
     `LOG="${remotePath(logName)}"`,
     ': > "$LOG"',
     ...(cdStmt ? [cdStmt] : []),
-    ...(pathStmt ? [pathStmt] : []),
+    ...dshResolve,
   ].join('; ');
-  // --patch 是 dsh 启动器自己的旗标，必须紧跟 `web` 排在 web app 旗标之前：真机
+  // boot 段：profile=null 保持 `dsh web …` 旧形态（`web` 是 --profile web 的别名，argv[0]
+  // 与指纹均不变化，不误杀零回归）；profile 有值改用 `dsh --profile <name>` —— 因为 `--profile`
+  // 是 dsh 全局旗标，放 `web` 子命令后会被 passThroughOptions 当作 web app 参数透传、无法切 profile
+  // （dsh bin.js：`web` 自带 profile=web，且 web 子命令拒绝父级 --profile）。真机实测两种放法都不切。
+  const boot = profile == null || profile === ''
+    ? '"$DSH" web'
+    : `"$DSH" --profile ${shq(profile)}`;
+  // --patch 是 dsh 启动器自己的旗标，必须紧跟 boot 段排在 web app 旗标之前：真机
   // （dsh 0.1.0-rc.7）上 `dsh web --no-open ... --patch P` 会被 web app 判为
   // unknown option '--patch' 而直接退出。extraArgs 反过来是 app 参数，仍留在尾部。
-  const launch = `nohup ${envp}${dshTok} web${patchArgs} --no-open --host 127.0.0.1 --port ${portTok}${extra} > "$LOG" 2>&1 < /dev/null &`;
+  const launch = `nohup ${envp}${boot}${patchArgs} --no-open --host 127.0.0.1 --port ${portTok}${extra} > "$LOG" 2>&1 < /dev/null &`;
   return `${prelude}; ${launch} echo "PID=$!"`;
 }
 

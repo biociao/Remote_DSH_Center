@@ -253,6 +253,49 @@ export function createActions({ store, confirm, navigate }) {
     return created;
   }
 
+  async function addRemoteHost(name, options = {}) {
+    const requestedName = typeof name === 'string' ? name.trim() : '';
+    if (!requestedName) {
+      store.addToast({ level: 'error', summary: '请填写远端主机名' });
+      return null;
+    }
+    const created = await guarded({
+      action: 'remote:create',
+      settleOnResolve: true,
+      run: () => api.createRemoteHost(requestedName, options),
+    });
+    if (!created?.host) return created;
+    store.upsertHost(created.host);
+    store.addToast({ level: 'success', summary: `已添加远端 ${created.host.name}` });
+    return created;
+  }
+
+  async function removeHosts(names) {
+    const unique = [...new Set(names)].filter((name) => store.getHost(name));
+    if (unique.length === 0) return null;
+    const ok = await confirm({
+      title: `删除 ${unique.length} 台主机？`,
+      lines: [
+        unique.join('、'),
+        '只会从 DSH Center 配置中移除；不会修改 ~/.ssh/config，也不会删除远端文件。运行中的主机请先关停。',
+      ],
+      confirmLabel: '删除',
+      danger: true,
+    });
+    if (!ok) return null;
+    const result = await guarded({
+      action: 'hosts:remove',
+      settleOnResolve: true,
+      failureMessage: '批量删除主机失败',
+      run: () => api.removeHosts(unique),
+    });
+    if (result?.removed) {
+      for (const name of result.removed) store.removeHost(name);
+      store.addToast({ level: 'success', summary: `已删除 ${result.removed.length} 台主机`, timeoutMs: 4_000 });
+    }
+    return result;
+  }
+
   /** toggle 走 config:save 通道；失败时用响应/回滚保持与服务端一致（10 §7 第 4 条）。 */
   async function setAutoStart(name, value) {
     const host = store.getHost(name);
@@ -431,6 +474,35 @@ export function createActions({ store, confirm, navigate }) {
     return res;
   }
 
+  /**
+   * 顶部标签拖拽后的新顺序：`visibleNames` 是可见主标签的新顺序，这里补上仍配置了、
+   * 但不在主标签里（禁用/不可用/溢出）的主机——按名字字母序排在末尾，落盘到
+   * defaults.hostOrder。拖动只重排可见主标签，收纳桶里的一律贴着末尾。
+   */
+  async function reorderHosts(visibleNames) {
+    if (!Array.isArray(visibleNames) || visibleNames.length === 0) return null;
+    const all = store.listHosts().map((host) => host.name);
+    const seen = new Set(visibleNames);
+    const rest = all
+      .filter((name) => !seen.has(name))
+      .sort((a, b) => a.localeCompare(b));
+    const ordered = [...visibleNames, ...rest];
+    const res = await guarded({
+      action: 'hosts:reorder',
+      settleOnResolve: true,
+      failureMessage: '保存标签顺序失败',
+      run: () => api.saveDefaults({ hostOrder: ordered }),
+    });
+    if (res) {
+      store.setDefaults(res.defaults);
+      store.addToast({ level: 'success', summary: '标签顺序已保存' });
+    } else {
+      // 保存失败：拖拽只是改了 DOM，未持久化——强制重渲染回到已存储的规范顺序。
+      store.emit('hosts:changed');
+    }
+    return res;
+  }
+
   async function clearOrphaned() {
     const count = store.listHosts().filter(isOrphaned).length;
     if (count === 0) return null;
@@ -512,6 +584,8 @@ export function createActions({ store, confirm, navigate }) {
     hostAction,
     probeAll,
     addLocalHost,
+    addRemoteHost,
+    removeHosts,
     setAutoStart,
     saveHostConfig,
     syncConfig,
@@ -520,6 +594,7 @@ export function createActions({ store, confirm, navigate }) {
     registerDshWorkspace,
     saveDefaults,
     reload,
+    reorderHosts,
     clearOrphaned,
     restartManager,
     openHost,

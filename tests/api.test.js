@@ -33,9 +33,12 @@ import { newHostState } from './harness/index.js';
 import {
   assertRest,
   assertShape,
+  accepted,
   hostConfigPutResponse,
+  hostsRemoveResponse,
   localHostCreateResponse,
   orphanedClearResponse,
+  remoteHostCreateResponse,
   settingsReadResponse,
   settingsWriteResponse,
   syncConfigResponse,
@@ -660,16 +663,17 @@ test('POST /api/hosts/local：缺省名称取 hostname，并以 201 持久化本
   assert.equal(config.hosts[os.hostname()].localPort, null);
 });
 
-test('POST /api/hosts/local：显式名称成功，第二台本机以 409 拒绝', async (t) => {
+test('POST /api/hosts/local：允许创建多个具名本机实例', async (t) => {
   const ctx = await bootServer(t);
   const created = await ctx.api('POST', '/api/hosts/local', { name: 'workstation' });
   assertRest(created, { status: 201, schema: localHostCreateResponse, label: 'POST local(explicit)' });
   assert.equal(created.json.host.name, 'workstation');
 
-  const duplicate = await ctx.api('POST', '/api/hosts/local', { name: 'workstation-2' });
-  assert.equal(duplicate.status, 409);
-  assert.equal(duplicate.json.code, 'LOCAL_HOST_EXISTS');
-  assert.equal(Object.hasOwn((await ctx.get('/api/config')).json.hosts, 'workstation-2'), false);
+  const second = await ctx.api('POST', '/api/hosts/local', { name: 'workstation-2' });
+  assertRest(second, { status: 201, schema: localHostCreateResponse, label: 'POST local(second)' });
+  const hosts = (await ctx.get('/api/config')).json.hosts;
+  assert.equal(hosts.workstation.local, true);
+  assert.equal(hosts['workstation-2'].local, true);
 });
 
 test('POST /api/hosts/local：与现有主机重名以 409 拒绝', async (t) => {
@@ -1034,6 +1038,23 @@ test('PUT host config：local 身份不可翻转，同值回显不写盘', async
   assert.equal(fs.readFileSync(configFile, 'utf8'), localBefore, '本机身份同值提交不重写配置');
 });
 
+test('PUT host config：接受并持久化 profile，非法值 400', async (t) => {
+  const ctx = await bootServer(t);
+  const configFile = path.join(ctx.harness.homeDir, 'config.json');
+
+  const set = await ctx.api('PUT', '/api/hosts/gpu-1/config', { profile: 'dcs' });
+  assertRest(set, { status: 200, schema: hostConfigPutResponse, label: 'PUT profile' });
+  assert.equal(set.json.host.config.profile, 'dcs');
+  assert.equal(JSON.parse(fs.readFileSync(configFile, 'utf8')).hosts['gpu-1'].profile, 'dcs', 'profile 落盘');
+
+  const clear = await ctx.api('PUT', '/api/hosts/gpu-1/config', { profile: null });
+  assert.equal(clear.json.host.config.profile, null, 'profile 可清空（回退 web）');
+
+  const bad = await ctx.api('PUT', '/api/hosts/gpu-1/config', { profile: '-bad' });
+  assert.equal(bad.status, 400);
+  assert.equal(bad.json.code, 'VALIDATION');
+});
+
 /** 只实现 hub 用到的 ServerResponse/IncomingMessage 面。 */
 function fakePair() {
   const writes = [];
@@ -1225,4 +1246,80 @@ test('POST /api/reload 重新读取 SSH 配置并返回刷新后的 orphaned 集
   assert.ok(Array.isArray(res.json.orphaned));
   assert.deepEqual(res.json.orphaned, ['gpu-1']);
   assert.equal((await ctx.get('/api/config')).json.hosts['gpu-1'] !== undefined, true);
+});
+
+test('POST /api/hosts：手动登记远端 201 落盘，重名 409、非法 body 400', async (t) => {
+  const ctx = await bootServer(t, { skipBoot: true });
+  const res = await ctx.api('POST', '/api/hosts', { name: 'box-1', sshUser: 'alice', dshPath: '/opt/dsh/bin/dsh' });
+  assertRest(res, { status: 201, schema: remoteHostCreateResponse, label: 'POST hosts' });
+  assert.equal(res.json.host.name, 'box-1');
+  assert.equal(res.json.host.local, false);
+  assert.equal(res.json.host.config.sshUser, 'alice');
+  assert.equal(res.json.host.config.dshPath, '/opt/dsh/bin/dsh');
+  assert.equal((await ctx.get('/api/config')).json.hosts['box-1'].sshUser, 'alice');
+
+  const dup = await ctx.api('POST', '/api/hosts', { name: 'box-1' });
+  assert.equal(dup.status, 409);
+  assert.equal(dup.json.code, 'ALREADY_EXISTS');
+
+  const bad = await ctx.api('POST', '/api/hosts', { name: '' });
+  assert.equal(bad.status, 400);
+  assert.equal(bad.json.code, 'VALIDATION');
+});
+
+test('POST /api/hosts/remove：删除成功并清理 state，运行中与未知主机拒绝', async (t) => {
+  const ctx = await bootServer(t, { skipBoot: true });
+  store.mutateHostState('gpu-1', (entry) => { entry.marker = 'must-drop'; });
+
+  const ghost = await ctx.api('POST', '/api/hosts/remove', { hosts: ['ghost'] });
+  assert.equal(ghost.status, 404);
+  assert.equal(ghost.json.code, 'NOT_FOUND');
+  assert.ok(store.getHostView('gpu-1'), '整单失败不得波及其他主机');
+
+  store.setPhase('gpu-1', 'ready', 'test');
+  store.setPhase('gpu-1', 'starting', 'test');
+  store.setPhase('gpu-1', 'running', 'test');
+  const busy = await ctx.api('POST', '/api/hosts/remove', { hosts: ['gpu-1'] });
+  assert.equal(busy.status, 409);
+  assert.equal(busy.json.code, 'PHASE_CONFLICT');
+  assert.ok(store.getHostView('gpu-1'), '运行中主机必须保留');
+
+  store.setPhase('gpu-1', 'crashed', 'test');
+  store.setPhase('gpu-1', 'ready', 'test');
+  const res = await ctx.api('POST', '/api/hosts/remove', { hosts: ['gpu-1', 'gpu-1'] });
+  assertRest(res, { status: 200, schema: hostsRemoveResponse, label: 'POST hosts/remove' });
+  assert.deepEqual(res.json.removed, ['gpu-1']);
+  assert.equal(store.getHostView('gpu-1'), null);
+  assert.equal(store.getHostState('gpu-1'), null);
+  assert.equal((await ctx.get('/api/config')).json.hosts['gpu-1'], undefined);
+});
+
+test('POST start：已有手动实例时 409 ADOPTION_AVAILABLE 并给出候选清单', async (t) => {
+  const ctx = await bootServer(t, { skipBoot: true });
+  store.setPhase('gpu-1', 'ready', 'test');
+  store.mutateHostState('gpu-1', (entry) => {
+    entry.manualInstances = [{ pid: 60768, args: 'dsh web --port 0', port: 41234 }];
+  });
+
+  const res = await ctx.api('POST', '/api/hosts/gpu-1/start', {});
+  assert.equal(res.status, 409);
+  assert.equal(res.json.code, 'ADOPTION_AVAILABLE');
+  assert.match(res.json.error, /pid=60768/);
+  assert.match(res.json.detail, /forceNew/);
+});
+
+test('POST /api/hosts/:name/adopt：ready 主机 202 受理，非法 body 与状态前置拒绝', async (t) => {
+  const ctx = await bootServer(t, { skipBoot: true });
+
+  const badPhase = await ctx.api('POST', '/api/hosts/gpu-1/adopt', {});
+  assert.equal(badPhase.status, 409);
+  assert.equal(badPhase.json.code, 'PHASE_CONFLICT');
+
+  store.setPhase('gpu-1', 'ready', 'test');
+  const bad = await ctx.api('POST', '/api/hosts/gpu-1/adopt', { pid: 'not-a-number' });
+  assert.equal(bad.status, 400);
+  assert.equal(bad.json.code, 'VALIDATION');
+
+  const res = await ctx.api('POST', '/api/hosts/gpu-1/adopt', {});
+  assertRest(res, { status: 202, schema: accepted, label: 'POST adopt' });
 });

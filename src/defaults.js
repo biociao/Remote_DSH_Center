@@ -13,6 +13,9 @@ export const FACTORY_DEFAULTS = Object.freeze({
   defaults: Object.freeze({
     remoteWebPort: 8899,
     localPortRange: Object.freeze([17701, 17799]),
+    // 顶部主机标签的自定义顺序（主机名数组）；空数组 = 按名字字母序。
+    // 放 defaults 而非顶层，是为了复用既有的 defaults 保存通道，不新增 API 端点。
+    hostOrder: Object.freeze([]),
   }),
   cleanup: Object.freeze({
     rules: Object.freeze(['owned-web', 'test-workdir']),
@@ -21,11 +24,16 @@ export const FACTORY_DEFAULTS = Object.freeze({
     local: false,
     enabled: true,
     autoStart: false,
-    dshPath: null,
     localPort: null,
     remoteWebPort: null,
     // null = 不注入 cd，远端 dsh 以 sshd 给的初始目录（$HOME）启动
     workdir: null,
+    // null = 沿用 ~/.ssh/config 里该 Host 的 User；非 null = 覆盖登录用户（多用户远端）
+    sshUser: null,
+    // null = 按 PATH / 常见目录 / login shell 自动解析；非 null = 每主机显式 dsh 路径
+    dshPath: null,
+    // null = 用 dsh 的 web profile（默认 `dsh web`）；非 null = 以 `--profile <name>` 启动
+    profile: null,
     inject: Object.freeze({
       env: Object.freeze({}),
       extraArgs: Object.freeze([]),
@@ -40,10 +48,12 @@ export function newHostConfig() {
     local: FACTORY_DEFAULTS.hostDefaults.local,
     enabled: FACTORY_DEFAULTS.hostDefaults.enabled,
     autoStart: FACTORY_DEFAULTS.hostDefaults.autoStart,
-    dshPath: FACTORY_DEFAULTS.hostDefaults.dshPath,
     localPort: FACTORY_DEFAULTS.hostDefaults.localPort,
     remoteWebPort: FACTORY_DEFAULTS.hostDefaults.remoteWebPort,
     workdir: FACTORY_DEFAULTS.hostDefaults.workdir,
+    sshUser: FACTORY_DEFAULTS.hostDefaults.sshUser,
+    dshPath: FACTORY_DEFAULTS.hostDefaults.dshPath,
+    profile: FACTORY_DEFAULTS.hostDefaults.profile,
     inject: { env: {}, extraArgs: [], patches: [] },
   };
 }
@@ -57,6 +67,7 @@ export function newFactoryConfig() {
     defaults: {
       remoteWebPort: FACTORY_DEFAULTS.defaults.remoteWebPort,
       localPortRange: [...FACTORY_DEFAULTS.defaults.localPortRange],
+      hostOrder: [...FACTORY_DEFAULTS.defaults.hostOrder],
     },
     cleanup: { rules: [...FACTORY_DEFAULTS.cleanup.rules] },
     hosts: {},
