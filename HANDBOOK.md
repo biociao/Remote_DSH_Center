@@ -97,6 +97,24 @@ zipapp。不要把 `pipx install agent-sidecar` 当作 PyPI 发布承诺。Sidec
 `send` 是独立的本机、显式授权写路径；Sidecar 的 DSH 注入也只存在于其可选 DSH 插件，
 不由本仓库的远端清单集成提供。验收远端链路只允许 hello-world 级别的非注入检查。
 
+### Pod 本地 E2E 插件拓扑（显式操作路径）
+
+若用户另行部署 AgentSideCar 的 E2E 脚本，远端可以形成
+`dsh web + AgentSideCar daemon + agent-sidecar DSH plugin` 的组合。此时：
+
+- Center 仍只负责一次性 SSH 控制、`dsh web` 启停和 `ssh -L` 页面隧道；
+- 插件通过 pod 本地 Unix socket 观察 daemon，并在 pod 本地执行经过确认的
+  `inject.prepare` / `inject.execute`；消息不会经 Center 或本机转发；
+- Center 的 host `inject.env` 只能为 `dsh web` 提供启动环境（例如 PATH），
+  不代表会话注入授权，也不应放置密钥；
+- `scripts/deploy-to-pod.sh` 属于 AgentSideCar 的操作员路径，不是 Center
+  安装器；它负责 rsync、插件构建、daemon readiness 以及受保护的 Copilot
+  子进程环境包装。
+
+因此“Center 远端不注入”与“pod 上用户显式开启的 Sidecar 插件可本地注入”
+是两个不冲突的契约。需要复现该组合时，应同时记录 Center 映射状态和插件
+二阶段回执，不能把 Center 的 launch inject 当成 agent session inject。
+
 ### 报告与跨仓库迭代
 
 - DSH Center 侧请使用
@@ -481,6 +499,23 @@ JSON 与 markdown，并和上一轮自动比较。`scripts/bootstrap-remote.sh` 
 Center 产品路径；它只可按授权安装 zstd/用户态 Sidecar，绝不安装 dsh 或 Python。需要检查
 bootstrap 自身时使用 `bash scripts/bootstrap-remote.sh --deep <ssh-host>`，随后再执行一次普通
 bootstrap 和验收。
+
+五 agent 的 Sidecar/plugin 矩阵使用独立操作员入口，不会被普通 `npm test` 自动触发：
+
+```bash
+npm run acceptance:matrix -- --host <ssh-host> --timeout 180000 --parallel 2
+npm run acceptance:matrix -- --fixture
+npm run acceptance:matrix -- --dry-run
+```
+
+矩阵默认覆盖 `claude,codex,copilot,kimi,dsh`，会在真实运行前 fresh scan SSH
+配置，复用 Center 隧道读取 pod 本地插件状态，并按 `inject.prepare` →
+`inject.execute` 核对真实回执。`--parallel`、`--timeout`、`--remote-dir` 和
+`--report-dir` 均有界；证据只保留 agent、脱敏 session hash、状态、delivery、
+outcome 和 error code，不保存消息、confirm token、凭据、完整 session ID 或原始
+路径。Kimi `delivery=unknown` 是不可重试的合同结果；DSH persisted preset 的
+`dsh_preset_unsupported`/HTTP 409 同样只记录为结果，不会被伪造为成功。`--fixture`
+和 `--dry-run` 只验证编排，不计入真实通过。
 
 CI 在 Ubuntu PR 上跑必需的 `npm run check`，合入 main 后在 macOS 复跑；Ubuntu 自带 Chrome，
 浏览器关必须真跑。macOS 未找到 Chrome 时该关可跳过；本机可用 `DSHC_CHROME=<路径>` 指定。

@@ -21,9 +21,11 @@ import { DshError, asDshError } from './lib/errors.js';
 import { bus, emitOperationDone, logEvent, recentLogs } from './lib/bus.js';
 import {
   assertValid,
+  adoptHostBodySchema,
   defaultsPatchSchema,
   dshSettingsPutSchema,
   dshWorkspaceCreateSchema,
+  emptyBodySchema,
   hostConfigPatchSchema,
   hostsRemoveSchema,
   localHostCreateSchema,
@@ -40,6 +42,7 @@ import {
 } from './settings-file.js';
 import * as store from './store.js';
 import * as tunnel from './tunnel.js';
+import { loadHosts } from './ssh-config.js';
 
 const MAX_BODY_BYTES = 1_048_576;
 const SETTINGS_MAX_BODY_BYTES = 6 * SETTINGS_MAX_BYTES + 4096;
@@ -376,6 +379,19 @@ function requireHost(name) {
   return view;
 }
 
+/** 远程动作的第二层门禁：SSH 条目消失时不能再碰远端。 */
+function requireRemoteHost(name, action) {
+  const view = requireHost(name);
+  if (!view.local && view.orphaned) {
+    throw new DshError(
+      'NOT_ALLOWED',
+      `主机 ${view.name} 的 ssh config 已消失，禁止${action}`,
+      { host: view.name },
+    );
+  }
+  return view;
+}
+
 function rejectQuery(req, url) {
   if (url.search !== '' || req.url.includes('?')) {
     throw new DshError('VALIDATION', '该接口不接受 query 参数');
@@ -459,6 +475,8 @@ export function createHandler({ managerCtl }) {
     ['POST', /^\/api\/hosts\/sync-config$/, async (req, res) => {
       const body = await readJsonBody(req);
       assertValid(syncConfigBodySchema, body, '批量配置同步请求校验失败');
+      requireRemoteHost(body.source, '同步配置');
+      for (const name of body.targets) requireRemoteHost(name, '同步配置');
       if (body.dryRun) {
         const { plan, previewToken } = createConfigSyncPreview(store.getConfig(), body);
         sendJson(res, 200, {
@@ -494,6 +512,13 @@ export function createHandler({ managerCtl }) {
       });
     }],
 
+    ['POST', /^\/api\/hosts\/clear-orphaned$/, async (req, res, _groups, url) => {
+      rejectQuery(req, url);
+      const removed = store.clearOrphanedHosts();
+      await tunnel.closeUnconfigured();
+      sendJson(res, 200, { removed });
+    }],
+
     ['GET', /^\/api\/config$/, (req, res) => {
       sendJson(res, 200, store.getConfig());
     }],
@@ -502,12 +527,23 @@ export function createHandler({ managerCtl }) {
       sendJson(res, 200, managerCtl.info());
     }],
 
+    ['GET', /^\/api\/sidecar\/status$/, async (req, res) => {
+      sendJson(res, 200, await managerCtl.sidecarStatus());
+    }],
+
+    ['POST', /^\/api\/analysis\/fleet$/, async (req, res, _groups, url) => {
+      rejectQuery(req, url);
+      const body = await readJsonBody(req);
+      assertValid(emptyBodySchema, body, '舰队分析请求体必须为空对象');
+      sendJson(res, 200, await managerCtl.fleetAnalysis());
+    }],
+
     ['GET', /^\/api\/events$/, (req, res) => {
       sseHub.attach(req, res);
     }],
 
     ['GET', /^\/api\/hosts\/([^/]+)\/log$/, async (req, res, [name], url) => {
-      const view = requireHost(decodeURIComponent(name));
+      const view = requireRemoteHost(decodeURIComponent(name), '读取日志');
       const raw = url.searchParams.get('lines');
       const lines = raw === null ? 200 : Number(raw);
       if (!Number.isInteger(lines) || lines < 1 || lines > 10_000) {
@@ -521,7 +557,7 @@ export function createHandler({ managerCtl }) {
 
     ['GET', /^\/api\/hosts\/([^/]+)\/dsh-settings$/, async (req, res, [name], url) => {
       rejectQuery(req, url);
-      const view = requireHost(decodeSettingsHost(name));
+      const view = requireRemoteHost(decodeSettingsHost(name), '读取 dsh 配置');
       const canonicalName = view.name;
       const result = await readDshSettings(canonicalName, {
         resolveLocal: () => requireHost(canonicalName).local,
@@ -532,7 +568,7 @@ export function createHandler({ managerCtl }) {
 
     ['PUT', /^\/api\/hosts\/([^/]+)\/dsh-settings$/, async (req, res, [name], url) => {
       rejectQuery(req, url);
-      const view = requireHost(decodeSettingsHost(name));
+      const view = requireRemoteHost(decodeSettingsHost(name), '保存 dsh 配置');
       const canonicalName = view.name;
       const body = await readJsonBody(req, {
         maxBytes: SETTINGS_MAX_BODY_BYTES,
@@ -551,7 +587,7 @@ export function createHandler({ managerCtl }) {
 
     ['POST', /^\/api\/hosts\/([^/]+)\/dsh-workspace$/, async (req, res, [name], url) => {
       rejectQuery(req, url);
-      const view = requireHost(decodeSettingsHost(name));
+      const view = requireRemoteHost(decodeSettingsHost(name), '登记 Workspace');
       const body = await readJsonBody(req, {
         maxBytes: DSH_WORKSPACE_MAX_BODY_BYTES,
         fatalUtf8: true,
@@ -605,6 +641,7 @@ export function createHandler({ managerCtl }) {
         }
         if ('enabled' in body) host.enabled = body.enabled;
         if ('autoStart' in body) host.autoStart = body.autoStart;
+        if ('dshPath' in body) host.dshPath = body.dshPath;
         if ('remoteWebPort' in body) host.remoteWebPort = body.remoteWebPort;
         // 与 inject 同款语义：落盘即生效于「下一次拉起」，不动正在跑的实例
         if ('workdir' in body) host.workdir = body.workdir;
@@ -639,11 +676,14 @@ export function createHandler({ managerCtl }) {
     }],
 
     ['POST', /^\/api\/reload$/, async (req, res) => {
+      const beforeNames = new Set(store.listHostNames());
       const result = store.reloadConfig();
+      const removedByReload = [...beforeNames].filter((name) => !store.getHostView(name));
+      const ssh = store.mergeSshHosts(loadHosts(), { skipAdding: removedByReload });
       // 这一趟可能把某台主机从配置里去掉了。它的隧道此刻既看不见也停不掉，
       // 只能由 manager 自己收（issue #96）。
       await tunnel.closeUnconfigured();
-      sendJson(res, 200, result);
+      sendJson(res, 200, { ...result, orphaned: ssh.orphaned });
     }],
 
     ['POST', /^\/api\/setup$/, async (req, res) => {
@@ -669,35 +709,58 @@ export function createHandler({ managerCtl }) {
     }],
 
     ['POST', /^\/api\/hosts\/([^/]+)\/probe$/, (req, res, [name]) => {
-      const view = requireHost(decodeURIComponent(name));
+      const view = requireRemoteHost(decodeURIComponent(name), '探测');
       accept(res, { host: view.name, action: 'probe' }, () => prober.probeHost(view.name));
     }],
 
-    ['POST', /^\/api\/hosts\/([^/]+)\/start$/, (req, res, [name]) => {
-      const view = requireHost(decodeURIComponent(name));
+    ['POST', /^\/api\/hosts\/([^/]+)\/start$/, async (req, res, [name]) => {
+      const view = requireRemoteHost(decodeURIComponent(name), '启动');
+      const body = await readJsonBody(req);
+      assertValid(adoptHostBodySchema, body, '启动请求体校验失败');
       if (!view.config.enabled) {
         throw new DshError('NOT_ALLOWED', `主机 ${view.name} 已在配置中停用`, { host: view.name });
       }
       requirePhase(view, ['ready', 'crashed'], '启动');
+      if ((view.manualInstances?.length ?? 0) > 0 && body.forceNew !== true) {
+        const candidates = view.manualInstances
+          .map((item) => `pid=${item.pid} port=${item.port ?? 'unknown'}`)
+          .join('、');
+        throw new DshError(
+          'ADOPTION_AVAILABLE',
+          `主机 ${view.name} 已有手动 dsh web（${candidates}），请确认只读领养或显式强拉`,
+          { host: view.name, detail: '领养：POST /api/hosts/:name/adopt；强拉：请求体 {"forceNew":true}' },
+        );
+      }
       accept(res, { host: view.name, action: 'start' }, () => launcher.start(view.name));
     }],
 
+    ['POST', /^\/api\/hosts\/([^/]+)\/adopt$/, async (req, res, [name]) => {
+      const view = requireRemoteHost(decodeURIComponent(name), '领养');
+      const body = await readJsonBody(req);
+      assertValid(adoptHostBodySchema, body, '领养请求体校验失败');
+      requirePhase(view, ['ready', 'crashed'], '领养');
+      accept(res, { host: view.name, action: 'adopt' }, () => launcher.adopt(view.name, {
+        pid: body.pid ?? null,
+        port: body.port ?? null,
+      }));
+    }],
+
     ['POST', /^\/api\/hosts\/([^/]+)\/stop$/, (req, res, [name]) => {
-      const view = requireHost(decodeURIComponent(name));
+      const view = requireRemoteHost(decodeURIComponent(name), '关停');
       requireManaged(view, '关停');
       requirePhase(view, ['running', 'degraded'], '关停');
       accept(res, { host: view.name, action: 'stop' }, () => launcher.stop(view.name));
     }],
 
     ['POST', /^\/api\/hosts\/([^/]+)\/restart$/, (req, res, [name]) => {
-      const view = requireHost(decodeURIComponent(name));
+      const view = requireRemoteHost(decodeURIComponent(name), '重启');
       requireManaged(view, '重启');
       requirePhase(view, ['running', 'degraded', 'crashed'], '重启');
       accept(res, { host: view.name, action: 'restart' }, () => launcher.restart(view.name));
     }],
 
     ['POST', /^\/api\/hosts\/([^/]+)\/reconnect$/, (req, res, [name]) => {
-      const view = requireHost(decodeURIComponent(name));
+      const view = requireRemoteHost(decodeURIComponent(name), '重连');
       requirePhase(view, ['degraded', 'running'], '重连');
       accept(res, { host: view.name, action: 'reconnect' }, () => tunnel.requestReconnect(view.name));
     }],

@@ -1173,7 +1173,21 @@ export function createFakeManager({
   function reload() {
     gate();
     pushLog({ level: 'info', msg: '已重载配置（demo 中配置只存在内存里）' });
-    return { changed: [] };
+    return { changed: [], orphaned: [...hosts.values()].filter((host) => host.orphaned).map((host) => host.name) };
+  }
+
+  function clearOrphaned() {
+    gate();
+    const removed = [...hosts.values()]
+      .filter((host) => host.orphaned && !host.local)
+      .map((host) => host.name);
+    for (const name of removed) {
+      bumpGen(name);
+      hosts.delete(name);
+      meta.delete(name);
+      delete config.hosts[name];
+    }
+    return { removed };
   }
 
   function setup(submitted) {
@@ -1298,6 +1312,7 @@ export function createFakeManager({
     saveHostConfig,
     saveDefaults,
     reload,
+    clearOrphaned,
     setup,
     createLocalHost,
     syncHostConfig,

@@ -160,6 +160,17 @@
 
 ## 5. HTTP / SSE 契约（13 文档，TST-05）
 
+## 5.1 新增能力登记（F1 / F2）
+
+| 行为 ID | 覆盖 |
+|---|---|
+| `API:GET /api/sidecar/status` | `tests/analysis.test.js`、真机 `dshc status` |
+| `API:POST /api/analysis/fleet` | `tests/analysis.test.js`、真机 Center 舰队分析 |
+| `API:POST /api/hosts/:name/adopt` | `tests/cli.test.js`、真机标准 8899 只读领养 |
+| `FSM:ready→running` `FSM:crashed→running` | `tests/lib/machine.test.js`、真机领养恢复 |
+| `ERR:ADOPTION_AVAILABLE` `ERR:ADOPT_REFUSED` `ERR:PORT_UNKNOWN` | `tests/cli.test.js`、`tests/prober.test.js` |
+| `CLI:cleanup` | `tests/cleanup.test.js`、真机 dry-run/apply 清理护栏 |
+
 | 面 | 覆盖 |
 |---|---|
 | 全部 REST 响应逐一过 schema 校验 | `tests/contract/schemas.js` 接入 `tests/integration/*.test.js` |
@@ -210,6 +221,9 @@
 | 6 请求超时但后端继续 | `tests/web/store.test.js`（pending 超时只解 loading） |
 | 7 手动实例禁 stop/restart，但 degraded 仍可安全重连隧道 | `tests/web/host-rules.test.js`、`tests/web/utils.test.js`、`tests/web/tabbar.test.js`、`tests/web/panes.test.js`、`tests/web/actions.test.js` |
 | 8 主机从 ssh config 消失 → orphaned | `tests/store.test.js`（mergeSshHosts）、`tests/web/utils.test.js` |
+| C-02 orphaned 远程动作拒绝（start/restart/stop/probe/reconnect/log/settings/Workspace/sync）与本机保留 | `tests/api.test.js`、`tests/web/actions.test.js`、`tests/web/mount.test.js` |
+| C-03 清空 orphaned 仅删当前集合、回收 state/隧道并保留 local；确认框与成功/失败 toast | `tests/api.test.js`、`tests/web/actions.test.js`、`tests/web/mount.test.js`、`tests/contract/schemas.js` |
+| C-04 reload 重新 loadHosts + mergeSshHosts 并返回 orphaned | `tests/api.test.js`、`tests/contract/schemas.js`、`tests/demo-contract.test.js` |
 | 9 主机名特殊字符（dataset + encodeURIComponent） | `tests/web/router.test.js` |
 | 10 SSE 乱序 / 重复（revision 丢旧） | `tests/web/store.test.js`、`tests/integration/sse.test.js` |
 | 11 连续点击同一危险动作 | `tests/web/actions.test.js` |
@@ -538,6 +552,7 @@ plugin/）；其测试由 `plugin/tests`（`npm run verify` 内含）+ CI 的 pl
 | `API:POST /api/hosts` | `tests/store.test.js`、`tests/web/actions.test.js`、`tests/web/mount.test.js` |
 | `API:POST /api/hosts/remove` | `tests/store.test.js`、`tests/web/actions.test.js`、`tests/web/mount.test.js` |
 | `API:POST /api/hosts/sync-config` | `tests/api.test.js`、`tests/config-sync.test.js`、`tests/integration/ui-live.test.js` |
+| `API:POST /api/hosts/clear-orphaned` | `tests/api.test.js`、`tests/demo-contract.test.js`、`tests/web/actions.test.js` |
 | `API:PUT /api/hosts/:name/config` | `tests/api.test.js`、`tests/integration/flows.test.js`、`tests/integration/cli.test.js` |
 | `API:PUT /api/config/defaults` | `tests/integration/flows.test.js`、`tests/integration/setup.test.js` |
 | `API:POST /api/reload` | `tests/integration/flows.test.js`、`tests/integration/resilience.test.js` |

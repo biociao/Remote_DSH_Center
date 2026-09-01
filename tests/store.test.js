@@ -5,7 +5,7 @@ import os from 'node:os';
 import path from 'node:path';
 
 import * as store from '../src/store.js';
-import { CONFIG_VERSION, resolvePaths } from '../src/defaults.js';
+import { CONFIG_VERSION, newHostConfig, resolvePaths } from '../src/defaults.js';
 import { bus, _resetForTest } from '../src/lib/bus.js';
 
 function fixture(t, { config, state } = {}) {
@@ -376,7 +376,7 @@ test('setPhase 守卫非法迁移：抛错且状态零改动', async (t) => {
 
   assert.equal(store.setPhase('gpu-1', 'ready', 'test'), 'ready');
   assert.throws(
-    () => store.setPhase('gpu-1', 'running', 'test'),
+    () => store.setPhase('gpu-1', 'degraded', 'test'),
     (e) => e.code === 'STATE_ILLEGAL_TRANSITION',
   );
   assert.equal(store.getPhase('gpu-1'), 'ready', '非法迁移不改状态');
@@ -431,6 +431,25 @@ test('mergeSshHosts：setup 完成后不自动加回新主机', async (t) => {
   const r2 = store.mergeSshHosts([{ name: 'gpu-1' }]);
   assert.deepEqual(r2.orphaned, []);
   assert.equal(store.getHostView('gpu-2'), null);
+});
+
+test('clearOrphanedHosts：原子删除配置、调用 state 清理且不影响本机主机', async (t) => {
+  const { paths } = fixture(t, { config: fullConfig() });
+  await store.init({ pathsOverride: paths });
+  store.mergeSshHosts([{ name: 'gpu-1' }]);
+  store.updateConfig((draft) => {
+    draft.hosts.local = { ...newHostConfig(), local: true, localPort: null };
+  });
+  store.mutateHostState('gpu-1', (entry) => { entry.marker = 'orphan-state'; });
+  store.mergeSshHosts([]);
+
+  assert.deepEqual(store.listOrphanedHostNames(), ['gpu-1']);
+  assert.deepEqual(store.clearOrphanedHosts(), ['gpu-1']);
+  assert.equal(store.getConfig().hosts['gpu-1'], undefined);
+  assert.equal(store.getHostState('gpu-1'), null);
+  assert.ok(store.getHostView('local')?.local);
+  assert.deepEqual(store.listOrphanedHostNames(), []);
+  assert.equal(JSON.parse(fs.readFileSync(paths.config, 'utf8')).hosts['gpu-1'], undefined);
 });
 
 test('reloadConfig 重读外部改动并给出 changed 清单', async (t) => {
