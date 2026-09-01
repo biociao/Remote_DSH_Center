@@ -447,7 +447,7 @@ export function start(name) {
         dshPath: view.config.dshPath
           ?? view.probe?.dshPath
           ?? store.getHostState(name)?.dshPath
-          ?? '/usr/bin/dsh',
+          ?? null,
         env: view.config.inject.env,
         extraArgs: view.config.inject.extraArgs,
         patchRemoteNames: sync.remoteNames,
