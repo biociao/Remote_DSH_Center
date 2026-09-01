@@ -817,7 +817,6 @@ export function getHostView(name) {
       local,
       enabled: hostConfig.enabled,
       autoStart: hostConfig.autoStart,
-      dshPath: hostConfig.dshPath ?? null,
       localPort: hostConfig.localPort,
       remoteWebPort: hostConfig.remoteWebPort,
       // 下次拉起生效值；本次实例的实际值在 web.workdir，两者不等即「重启后生效」
