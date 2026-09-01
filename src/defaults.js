@@ -21,7 +21,6 @@ export const FACTORY_DEFAULTS = Object.freeze({
     local: false,
     enabled: true,
     autoStart: false,
-    dshPath: null,
     localPort: null,
     remoteWebPort: null,
     // null = 不注入 cd，远端 dsh 以 sshd 给的初始目录（$HOME）启动
@@ -46,7 +45,6 @@ export function newHostConfig() {
     local: FACTORY_DEFAULTS.hostDefaults.local,
     enabled: FACTORY_DEFAULTS.hostDefaults.enabled,
     autoStart: FACTORY_DEFAULTS.hostDefaults.autoStart,
-    dshPath: FACTORY_DEFAULTS.hostDefaults.dshPath,
     localPort: FACTORY_DEFAULTS.hostDefaults.localPort,
     remoteWebPort: FACTORY_DEFAULTS.hostDefaults.remoteWebPort,
     workdir: FACTORY_DEFAULTS.hostDefaults.workdir,

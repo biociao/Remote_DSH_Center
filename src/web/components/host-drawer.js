@@ -14,7 +14,6 @@ import {
   formatEnvLines,
   formatLines,
   input,
-  parseDshPath,
   parseEnvLines,
   parseDshPath,
   parseLines,

@@ -181,14 +181,10 @@ const injectSchema = V.obj({
 const workdirSchema = V.nullable(V.custom(
   (v) => isWorkdirPath(v) || '须为绝对路径（/ 开头）或 ~、~/… 形态',
 ));
-const dshPathSchema = V.nullable(V.custom(
-  (v) => isWorkdirPath(v) || '须为绝对路径（/ 开头）或 ~、~/… 形态',
-));
 // null = 用 dsh 的 web profile（default 命令形态 `dsh web`）；非 null = 以 `--profile <name>` 启动
 const dshProfileSchema = V.nullable(V.custom(
   (v) => isValidProfileName(v) || '须为合法 dsh profile 名（字母数字开头，可含 . _ -）',
 ));
-
 /** dshPath 只接受显式绝对路径，避免把命令名或换行带入远端脚本。 */
 const dshPathSchema = V.nullable(V.custom(
   (v) => (typeof v === 'string' && /^\/[^\0\r\n]*$/u.test(v))
@@ -204,7 +200,6 @@ const hostConfigSchema = V.obj(
     local: V.bool(),
     enabled: V.bool(),
     autoStart: V.bool(),
-    dshPath: dshPathSchema,
     localPort: V.nullable(port),
     remoteWebPort: V.nullable(port),
     workdir: workdirSchema,
@@ -217,6 +212,17 @@ const hostConfigSchema = V.obj(
   },
   { optional: ['local', 'workdir', 'sshUser', 'dshPath', 'profile'] },
 );
+
+export const adoptHostBodySchema = V.obj({
+  pid: V.nullable(V.int({ min: 1, max: 4_294_967_295 })),
+  port: V.nullable(port),
+  forceNew: V.bool(),
+}, { optional: ['pid', 'port', 'forceNew'] });
+export const emptyBodySchema = V.obj({}, { extra: false });
+export const cleanupBodySchema = V.obj({
+  rules: V.arr(V.str({ min: 1, max: 32 })),
+  apply: V.bool(),
+}, { optional: ['rules', 'apply'] });
 
 const hostsSchema = V.all(
   V.rec(null, hostConfigSchema),
@@ -311,7 +317,6 @@ export const hostConfigPatchSchema = V.obj(
     local: V.bool(),
     enabled: V.bool(),
     autoStart: V.bool(),
-    dshPath: dshPathSchema,
     remoteWebPort: V.nullable(port),
     workdir: workdirSchema,
     sshUser: V.nullable(V.custom(

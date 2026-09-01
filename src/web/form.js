@@ -154,19 +154,15 @@ export function buildHostPatch(raw) {
   if (!patches.ok) errors.patches = patches.error;
 
   if (Object.keys(errors).length > 0) return { ok: false, errors };
-  return {
-    ok: true,
-    value: {
-      enabled: Boolean(raw.enabled),
-      remoteWebPort: port.value,
-      workdir: workdir.value,
-      sshUser: sshUser.value,
-      dshPath: dshPath.value,
-      profile: profile.value,
-      inject: { env: env.value, extraArgs: parseLines(raw.extraArgs), patches: patches.value },
-    },
+  const value = {
+    enabled: Boolean(raw.enabled),
+    remoteWebPort: port.value,
+    workdir: workdir.value,
+    sshUser: sshUser.value,
+    dshPath: dshPath.value,
+    profile: profile.value,
+    inject: { env: env.value, extraArgs: parseLines(raw.extraArgs), patches: patches.value },
   };
-  if (Object.hasOwn(raw, 'dshPath')) value.dshPath = dshPath.value;
   return { ok: true, value };
 }
 
