@@ -1514,6 +1514,7 @@ async function main() {
         await sleep(120);
         // eslint-disable-next-line no-await-in-loop -- 同上
         assert(await focused() === names[(i + 1) % names.length],
+          // eslint-disable-next-line no-await-in-loop -- 失败文案里再读一次焦点，仍在循环内串行
           `第 ${i + 1} 次 ArrowRight 应到 ${names[(i + 1) % names.length]}，实测「${await focused()}」`);
       }
       assert(await focused() === names[0], `走到末尾该环绕回 ${names[0]}，实测「${await focused()}」`);

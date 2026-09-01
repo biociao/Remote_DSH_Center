@@ -979,6 +979,7 @@ async function cmdCleanup(parsed) {
     ));
     if (parsed.flags.apply !== true) return EXIT.ok;
     for (const item of plan) {
+      // eslint-disable-next-line no-await-in-loop -- 清理逐个关停并在首个失败即停，保持顺序与早退语义
       const code = await runAction(port, item.host, 'stop', { flags: {} });
       if (code !== EXIT.ok) return code;
     }

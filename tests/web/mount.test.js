@@ -2101,6 +2101,7 @@ test('dsh Workspace 按钮实时覆盖配置、应用、CWD、连接与可写闸
   for (const [host, message] of cases) {
     es().send('host-changed', { revision, host });
     revision += 1;
+    // eslint-disable-next-line no-await-in-loop -- 每个 case 都要等 SSE 落地后再断言，必须串行
     await flush();
     assert.equal(controls.register.disabled, true);
     assert.match(controls.status.textContent, message);
@@ -2154,6 +2155,7 @@ test('Workspace 登记 pending 阻止重复入口与 close/Esc/scrim，created:f
 
 test('Workspace 登记中主机移除安全关闭；迟到成功/错误不回写 DOM 或泄露 path', async (t) => {
   for (const outcome of ['success', 'error']) {
+    // eslint-disable-next-line no-await-in-loop -- 子用例共享挂载夹具与登记状态，必须串行
     await t.test(outcome, async (st) => {
       const registration = deferred();
       const { app, dom, es } = await mount(st, {
@@ -2334,6 +2336,7 @@ test('dsh 配置 stale 与结果未知均内联提示并保留用户草稿', asy
     { status: 409, code: 'VALIDATION', summary: /请求无效/, notStale: true },
     { status: 500, code: 'PROTO_PARSE', summary: /结果未知.*草稿已保留/ },
   ]) {
+    // eslint-disable-next-line no-await-in-loop -- 子用例共享挂载夹具与草稿状态，必须串行
     await t.test(failure.code, async (st) => {
       let putCount = 0;
       const { dom } = await mount(st, {
@@ -2381,6 +2384,7 @@ test('stale/结果未知后重新加载：旧 dirty 草稿留在只读对照区�
     { status: 409, code: 'SETTINGS_STALE' },
     { status: 500, code: 'PROTO_PARSE' },
   ]) {
+    // eslint-disable-next-line no-await-in-loop -- 子用例共享挂载夹具与草稿状态，必须串行
     await t.test(failure.code, async (st) => {
       let reads = 0;
       let writes = 0;

@@ -12,7 +12,7 @@ import {
 } from './lib/proto.js';
 import { hostQueue, localExec, sshExec } from './lib/ssh.js';
 import { PROBE_PROTECTED_PHASES } from './lib/machine.js';
-import { DshError, asDshError } from './lib/errors.js';
+import { asDshError } from './lib/errors.js';
 import { mapPool } from './lib/pool.js';
 import { SSH_FANOUT_LIMIT } from './defaults.js';
 import * as store from './store.js';

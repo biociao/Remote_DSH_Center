@@ -452,7 +452,6 @@ export function start(name) {
         extraArgs: view.config.inject.extraArgs,
         patchRemoteNames: sync.remoteNames,
         workdir,
-        dshPath: view.config.dshPath ?? null,
         profile: view.config.profile ?? null,
       }, { local, signal });
 

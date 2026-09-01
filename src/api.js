@@ -783,6 +783,7 @@ export function createHandler({ managerCtl }) {
       }
 
       try {
+        // eslint-disable-next-line no-await-in-loop -- 路由按序匹配，命中即执行并返回，并非可并行的批量任务
         await fn(req, res, match.slice(1), url);
       } catch (err) {
         if (res.headersSent) {
