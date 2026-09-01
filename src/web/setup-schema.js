@@ -179,7 +179,6 @@ export function buildConfigFromAnswers(answers, candidates, probeResults, factor
       local,
       enabled: true,
       autoStart,
-      dshPath: hostDefaults.dshPath ?? null,
       localPort: local ? null : hostDefaults.localPort,
       remoteWebPort: hostDefaults.remoteWebPort,
       workdir: hostDefaults.workdir ?? null,
