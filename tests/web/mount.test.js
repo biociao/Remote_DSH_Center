@@ -445,6 +445,99 @@ test('pending start 遇到 running 快照后解除行忙态', async (t) => {
     'running 到达后应展示可用的下一步动作');
 });
 
+test('两行同为「运行中」就必须给同一排按钮，领养行只是按不动并写明原因', async (t) => {
+  const adopted = running('adopted');
+  adopted.web = { ...adopted.web, pid: 777, startedByUs: false };
+  const { dom } = await mount(t, { hosts: [running('managed'), adopted] });
+
+  const labels = (name) => [...dom.app
+    .querySelector(`[data-host="${name}"] .row-actions`)
+    .querySelectorAll('.btn')]
+    .map((b) => b.textContent);
+
+  assert.deepEqual(labels('adopted'), labels('managed'), '状态列写着同一个词，操作列不能一行四个一行两个');
+  assert.deepEqual(labels('managed'), ['打开', '重启', '关停', '探测']);
+
+  for (const act of ['restart', 'stop']) {
+    const btn = dom.app.querySelector(`[data-host="adopted"] [data-act="${act}"]`);
+    assert.equal(btn.disabled, true, `领养实例的${act}仍须禁用（不误杀契约）`);
+    assert.match(btn.title, /非本工具拉起/, '按不动的按钮要自己解释为什么');
+    assert.equal(dom.app.querySelector(`[data-host="managed"] [data-act="${act}"]`).disabled, false);
+  }
+});
+
+test('六个手动实例：拉起弹出候选单选，选中的那一个才被领养', async (t) => {
+  const manualInstances = Array.from({ length: 6 }, (_, i) => ({
+    pid: 3000 + i,
+    port: i === 4 ? null : 8900 + i,
+    args: `dsh web --port ${8900 + i} --workdir /w/${i}`,
+  }));
+  const { dom, calls } = await mount(t, {
+    hosts: [hostView('mac-mini', { manualInstances })],
+    responder: ({ path, method }) => (path === '/api/hosts/mac-mini/start' && method === 'POST'
+      ? {
+        ok: false,
+        status: 409,
+        text: async () => JSON.stringify({
+          error: '主机 mac-mini 已有手动 dsh web（pid=3000 port=8900、…）',
+          code: 'ADOPTION_AVAILABLE',
+        }),
+      }
+      : null),
+  });
+
+  dom.app.querySelector('[data-host="mac-mini"] [data-act="start"]').click();
+  await flush();
+
+  const dialog = dom.app.querySelector('.confirm-dialog');
+  assert.equal(dialog.open, true, '多实例时不能直接领养，也不能只丢一条错误');
+  const radios = dialog.querySelectorAll('.confirm-choice input[type="radio"]');
+  assert.equal(radios.length, 6, '六个候选逐条列出，用户才认得出该领养谁');
+  assert.equal(radios[0].checked, true, '默认选中第一个可用候选，省掉一次点击');
+  assert.equal(radios[4].disabled, true, '端口未知的候选留在原位但按不动');
+  assert.match(radios[4].title, /重新探测/);
+  assert.match(dialog.textContent, /8902/, '候选文案要带端口');
+  assert.match(dialog.textContent, /--workdir \/w\/2/, '命令行是区分同端口实例的线索');
+
+  radios[3].dispatchEvent({ type: 'change' });
+  assert.equal(radios[0].checked, false, '单选组只能有一个选中');
+  dialog.querySelectorAll('.confirm-actions .btn').find((b) => b.textContent === '只读领养').click();
+  await flush();
+
+  const adopt = calls.find((c) => c.path === '/api/hosts/mac-mini/adopt');
+  assert.equal(adopt.body.pid, 3003, '领养请求必须带上用户选中的 PID');
+});
+
+test('候选全部端口未知：确认按钮按不动，仍留强拉与取消两条路', async (t) => {
+  const { dom, calls } = await mount(t, {
+    hosts: [hostView('mac-mini', {
+      manualInstances: [
+        { pid: 4001, port: null, args: 'dsh web' },
+        { pid: 4002, port: null, args: 'dsh web' },
+      ],
+    })],
+    responder: ({ path, method }) => (path === '/api/hosts/mac-mini/start' && method === 'POST'
+      ? {
+        ok: false,
+        status: 409,
+        text: async () => JSON.stringify({ error: '已有手动 dsh web', code: 'ADOPTION_AVAILABLE' }),
+      }
+      : null),
+  });
+
+  dom.app.querySelector('[data-host="mac-mini"] [data-act="start"]').click();
+  await flush();
+
+  const dialog = dom.app.querySelector('.confirm-dialog');
+  const buttons = dialog.querySelectorAll('.confirm-actions .btn');
+  assert.equal(buttons.find((b) => b.textContent === '只读领养').disabled, true,
+    '没有能领养的候选就不该让人点出一次必然失败');
+  buttons.find((b) => b.textContent === '强拉第二份').click();
+  await flush();
+
+  assert.deepEqual(calls.filter((c) => c.method === 'POST').at(-1).body, { forceNew: true });
+});
+
 test('点 ready 标签一步拉起：慢 SSE 首帧显示可访问占位，phase 不乐观改写', async (t) => {
   const ready = hostView('gpu-ready');
   const { app, dom, calls, es } = await mount(t, { hosts: [ready] });

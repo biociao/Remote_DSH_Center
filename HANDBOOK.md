@@ -43,6 +43,11 @@
 也不会代为安装；Center 会展示可复制的安装/配置指引。若 dsh 只在 login shell 可见，
 还会报告嗅探到的路径与非交互 SSH PATH，帮助修正环境。
 
+嗅探不止看非交互 PATH：常见安装目录（含 canon 的 `~/.canon/node/bin`）逐个试，
+再退到 login shell，最后退到交互 shell —— 装在 `~/.bashrc` 里的 PATH 只有交互 shell
+看得见。解析出的 `dsh` 常是 `#!/usr/bin/env node` 脚本，解释器与它同住一个 bin 目录，
+故版本探测与拉起都会先把该目录并入 `PATH`。
+
 ## Agent Sidecar 集成
 
 [Agent Sidecar](https://github.com/shendeguize/AgentSideCar) 是 DSH Center 的下游观察消费者。
@@ -355,6 +360,12 @@ Center 把文件视为不透明 UTF-8 文本，不解析或改写 YAML，因此�
 
 **别人手动启动的 `dsh web` 会被关掉吗？** 不会。手动实例显示为“🔒 手动”、只读，
 `stop` 与 `restart` 会被拒绝；指纹不一致永远不杀。
+
+**一台主机上有多个手动实例，领养哪一个？** 由你指定，Center 不猜。点“拉起”时，
+对话框会把每个候选的 PID、端口与命令行列出来供单选；端口未知的候选禁用，重新探测
+补上端口后才能领养。CLI 对应 `dshc start <host> --adopt --pid <pid>`：交互模式下也可
+直接在提示里输入 PID，非交互模式缺 `--pid` 会明确失败而不是随机挑一个。想要一个全新
+的实例就用 `--force-new`（页面上的“强拉第二份”）。
 
 **iframe 会被远端 `X-Frame-Options` 挡住吗？** 实测 dsh web 没有这类响应头。首载 loading
 只表示等待，无法跨源判断失败；若确实被挡，可从主机菜单“在新窗口打开”。
