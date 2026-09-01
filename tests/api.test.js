@@ -33,9 +33,12 @@ import { newHostState } from './harness/index.js';
 import {
   assertRest,
   assertShape,
+  accepted,
   hostConfigPutResponse,
+  hostsRemoveResponse,
   localHostCreateResponse,
   orphanedClearResponse,
+  remoteHostCreateResponse,
   settingsReadResponse,
   settingsWriteResponse,
   syncConfigResponse,
@@ -1243,4 +1246,80 @@ test('POST /api/reload 重新读取 SSH 配置并返回刷新后的 orphaned 集
   assert.ok(Array.isArray(res.json.orphaned));
   assert.deepEqual(res.json.orphaned, ['gpu-1']);
   assert.equal((await ctx.get('/api/config')).json.hosts['gpu-1'] !== undefined, true);
+});
+
+test('POST /api/hosts：手动登记远端 201 落盘，重名 409、非法 body 400', async (t) => {
+  const ctx = await bootServer(t, { skipBoot: true });
+  const res = await ctx.api('POST', '/api/hosts', { name: 'box-1', sshUser: 'alice', dshPath: '/opt/dsh/bin/dsh' });
+  assertRest(res, { status: 201, schema: remoteHostCreateResponse, label: 'POST hosts' });
+  assert.equal(res.json.host.name, 'box-1');
+  assert.equal(res.json.host.local, false);
+  assert.equal(res.json.host.config.sshUser, 'alice');
+  assert.equal(res.json.host.config.dshPath, '/opt/dsh/bin/dsh');
+  assert.equal((await ctx.get('/api/config')).json.hosts['box-1'].sshUser, 'alice');
+
+  const dup = await ctx.api('POST', '/api/hosts', { name: 'box-1' });
+  assert.equal(dup.status, 409);
+  assert.equal(dup.json.code, 'ALREADY_EXISTS');
+
+  const bad = await ctx.api('POST', '/api/hosts', { name: '' });
+  assert.equal(bad.status, 400);
+  assert.equal(bad.json.code, 'VALIDATION');
+});
+
+test('POST /api/hosts/remove：删除成功并清理 state，运行中与未知主机拒绝', async (t) => {
+  const ctx = await bootServer(t, { skipBoot: true });
+  store.mutateHostState('gpu-1', (entry) => { entry.marker = 'must-drop'; });
+
+  const ghost = await ctx.api('POST', '/api/hosts/remove', { hosts: ['ghost'] });
+  assert.equal(ghost.status, 404);
+  assert.equal(ghost.json.code, 'NOT_FOUND');
+  assert.ok(store.getHostView('gpu-1'), '整单失败不得波及其他主机');
+
+  store.setPhase('gpu-1', 'ready', 'test');
+  store.setPhase('gpu-1', 'starting', 'test');
+  store.setPhase('gpu-1', 'running', 'test');
+  const busy = await ctx.api('POST', '/api/hosts/remove', { hosts: ['gpu-1'] });
+  assert.equal(busy.status, 409);
+  assert.equal(busy.json.code, 'PHASE_CONFLICT');
+  assert.ok(store.getHostView('gpu-1'), '运行中主机必须保留');
+
+  store.setPhase('gpu-1', 'crashed', 'test');
+  store.setPhase('gpu-1', 'ready', 'test');
+  const res = await ctx.api('POST', '/api/hosts/remove', { hosts: ['gpu-1', 'gpu-1'] });
+  assertRest(res, { status: 200, schema: hostsRemoveResponse, label: 'POST hosts/remove' });
+  assert.deepEqual(res.json.removed, ['gpu-1']);
+  assert.equal(store.getHostView('gpu-1'), null);
+  assert.equal(store.getHostState('gpu-1'), null);
+  assert.equal((await ctx.get('/api/config')).json.hosts['gpu-1'], undefined);
+});
+
+test('POST start：已有手动实例时 409 ADOPTION_AVAILABLE 并给出候选清单', async (t) => {
+  const ctx = await bootServer(t, { skipBoot: true });
+  store.setPhase('gpu-1', 'ready', 'test');
+  store.mutateHostState('gpu-1', (entry) => {
+    entry.manualInstances = [{ pid: 60768, args: 'dsh web --port 0', port: 41234 }];
+  });
+
+  const res = await ctx.api('POST', '/api/hosts/gpu-1/start', {});
+  assert.equal(res.status, 409);
+  assert.equal(res.json.code, 'ADOPTION_AVAILABLE');
+  assert.match(res.json.error, /pid=60768/);
+  assert.match(res.json.detail, /forceNew/);
+});
+
+test('POST /api/hosts/:name/adopt：ready 主机 202 受理，非法 body 与状态前置拒绝', async (t) => {
+  const ctx = await bootServer(t, { skipBoot: true });
+
+  const badPhase = await ctx.api('POST', '/api/hosts/gpu-1/adopt', {});
+  assert.equal(badPhase.status, 409);
+  assert.equal(badPhase.json.code, 'PHASE_CONFLICT');
+
+  store.setPhase('gpu-1', 'ready', 'test');
+  const bad = await ctx.api('POST', '/api/hosts/gpu-1/adopt', { pid: 'not-a-number' });
+  assert.equal(bad.status, 400);
+  assert.equal(bad.json.code, 'VALIDATION');
+
+  const res = await ctx.api('POST', '/api/hosts/gpu-1/adopt', {});
+  assertRest(res, { status: 202, schema: accepted, label: 'POST adopt' });
 });

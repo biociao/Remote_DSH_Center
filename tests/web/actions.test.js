@@ -1610,3 +1610,97 @@ test('ready 打开以 config.enabled 为准，禁用项不触发 start', async (
   );
   assert.deepEqual(h.navigated, ['#/host/config-disabled', '#/host/config-enabled']);
 });
+
+test('addRemoteHost：空名称零请求；成功则 POST 并落地 HostView', async (t) => {
+  const h = harness(t, {
+    responder: ({ path, method, body }) => {
+      if (path === '/api/hosts' && method === 'POST') return res(201, { host: hostView({ name: body.name }) });
+      return res(404, { error: 'unexpected', code: 'NOT_FOUND' });
+    },
+  });
+
+  assert.equal(await h.actions.addRemoteHost('   '), null);
+  assert.equal(h.calls.length, 0, '空名称不得发请求');
+  assert.equal(h.store.state.toasts.at(-1).level, 'error');
+
+  const created = await h.actions.addRemoteHost('box-1', { sshUser: 'alice', dshPath: null });
+  assert.equal(created.host.name, 'box-1');
+  assert.deepEqual(h.calls[0].body, { name: 'box-1', sshUser: 'alice', dshPath: null });
+  assert.ok(h.store.getHost('box-1'), '回传 HostView 必须落地');
+  assert.equal(h.store.state.toasts.at(-1).level, 'success');
+});
+
+test('removeHosts：确认取消零请求；确认后批量删除并同步前端镜像', async (t) => {
+  const cancelled = harness(t, { confirmAnswer: false, responder: () => res(200, {}) });
+  seed(cancelled.store);
+  assert.equal(await cancelled.actions.removeHosts(['gpu-1']), null);
+  assert.equal(cancelled.calls.length, 0, '取消确认不得发请求');
+  assert.ok(cancelled.store.getHost('gpu-1'));
+
+  const h = harness(t, {
+    responder: ({ path, method }) => {
+      if (path === '/api/hosts/remove' && method === 'POST') return res(200, { removed: ['gpu-1'] });
+      return res(404, { error: 'unexpected', code: 'NOT_FOUND' });
+    },
+  });
+  seed(h.store);
+  const result = await h.actions.removeHosts(['gpu-1', 'ghost']);
+  assert.deepEqual(h.calls[0].body, { hosts: ['gpu-1'] }, '未知主机在动作层即被过滤');
+  assert.deepEqual(result.removed, ['gpu-1']);
+  assert.equal(h.store.getHost('gpu-1'), null, '前端镜像同步移除');
+  assert.equal(h.store.state.toasts.at(-1).level, 'success');
+});
+
+test('start 遇 ADOPTION_AVAILABLE：只读领养改发 adopt', async (t) => {
+  const h = harness(t, {
+    confirmAnswer: true,
+    responder: ({ path, body }) => {
+      if (path === '/api/hosts/gpu-1/start' && body?.forceNew !== true) {
+        return res(409, { error: '已有手动实例', code: 'ADOPTION_AVAILABLE' });
+      }
+      return res(202, { accepted: true, operationId: crypto.randomUUID(), host: 'gpu-1' });
+    },
+  });
+  seed(h.store);
+
+  await h.actions.hostAction('start', 'gpu-1');
+  assert.deepEqual(
+    h.calls.map((call) => call.path),
+    ['/api/hosts/gpu-1/start', '/api/hosts/gpu-1/adopt'],
+    '确认只读领养后改走 adopt 通道',
+  );
+});
+
+test('start 遇 ADOPTION_AVAILABLE：强拉第二份带 forceNew，取消则零后续请求', async (t) => {
+  const secondary = harness(t, {
+    confirmAnswer: 'secondary',
+    responder: () => res(202, { accepted: true, operationId: crypto.randomUUID(), host: 'gpu-1' }),
+  });
+  seed(secondary.store);
+  // 第一次 start 才返回 ADOPTION_AVAILABLE，其余直接 202
+  let first = true;
+  globalThis.fetch = async (path, init = {}) => {
+    const body = init.body ? JSON.parse(init.body) : null;
+    secondary.calls.push({ path, method: init.method ?? 'GET', body });
+    if (first && path.endsWith('/start') && body?.forceNew !== true) {
+      first = false;
+      return res(409, { error: '已有手动实例', code: 'ADOPTION_AVAILABLE' });
+    }
+    return res(202, { accepted: true, operationId: crypto.randomUUID(), host: 'gpu-1' });
+  };
+
+  await secondary.actions.hostAction('start', 'gpu-1');
+  assert.deepEqual(
+    secondary.calls.map((call) => [call.path, call.body?.forceNew === true]),
+    [['/api/hosts/gpu-1/start', false], ['/api/hosts/gpu-1/start', true]],
+    '强拉必须显式带 forceNew',
+  );
+
+  const cancelled = harness(t, {
+    confirmAnswer: false,
+    responder: () => res(409, { error: '已有手动实例', code: 'ADOPTION_AVAILABLE' }),
+  });
+  seed(cancelled.store);
+  await cancelled.actions.hostAction('start', 'gpu-1');
+  assert.equal(cancelled.calls.length, 1, '取消领养/强拉后不得再发请求');
+});

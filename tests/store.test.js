@@ -571,3 +571,43 @@ test('hostCounts 统计 running/degraded/crashed', async (t) => {
 
   assert.deepEqual(store.hostCounts(), { total: 2, running: 1, degraded: 1, crashed: 0 });
 });
+
+test('createRemoteHost：手动登记远端并落盘，重名以 ALREADY_EXISTS 拒绝', async (t) => {
+  const { paths } = fixture(t, { config: fullConfig() });
+  await store.init({ pathsOverride: paths });
+
+  const view = store.createRemoteHost('box-1', { sshUser: 'alice', dshPath: '/opt/dsh/bin/dsh' });
+  assert.equal(view.name, 'box-1');
+  assert.equal(view.local, false);
+  assert.equal(view.config.sshUser, 'alice');
+  assert.equal(view.config.dshPath, '/opt/dsh/bin/dsh');
+  const onDisk = JSON.parse(fs.readFileSync(paths.config, 'utf8'));
+  assert.equal(onDisk.hosts['box-1'].sshUser, 'alice');
+  assert.equal(onDisk.hosts['box-1'].dshPath, '/opt/dsh/bin/dsh');
+
+  assert.throws(() => store.createRemoteHost('box-1'), (err) => err.code === 'ALREADY_EXISTS');
+  assert.throws(() => store.createRemoteHost('gpu-1'), (err) => err.code === 'ALREADY_EXISTS');
+});
+
+test('removeHosts：原子删除配置与 state，任一不存在则整单拒绝', async (t) => {
+  const { paths } = fixture(t, { config: fullConfig() });
+  await store.init({ pathsOverride: paths });
+  store.createRemoteHost('box-1');
+  store.createRemoteHost('box-2');
+  store.mutateHostState('box-1', (entry) => { entry.marker = 'must-drop'; });
+
+  assert.throws(
+    () => store.removeHosts(['box-1', 'ghost']),
+    (err) => err.code === 'NOT_FOUND',
+  );
+  assert.ok(store.getConfig().hosts['box-1'], '整单失败不得删除任何主机');
+  assert.ok(store.getHostState('box-1'));
+
+  assert.deepEqual(store.removeHosts(['box-1', 'box-2', 'box-1']), ['box-1', 'box-2']);
+  assert.equal(store.getHostState('box-1'), null);
+  assert.equal(store.getHostView('box-2'), null);
+  const onDisk = JSON.parse(fs.readFileSync(paths.config, 'utf8'));
+  assert.equal(onDisk.hosts['box-1'], undefined);
+  assert.equal(onDisk.hosts['box-2'], undefined);
+  assert.ok(onDisk.hosts['gpu-1'], '未点名主机不受影响');
+});
