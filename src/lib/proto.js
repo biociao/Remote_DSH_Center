@@ -32,23 +32,28 @@ const SNIFF_DIRS = '"$HOME/.local/bin" "$HOME/bin" "$HOME/.npm-global/bin" /usr/
 
 // ── §1.1 探测协议 ────────────────────────────────────────────────────────
 
-/** dshPath=null 保持自动探测；显式路径也要把同目录加入 PATH，供 /usr/bin/env node shebang 使用。 */
+function dshPathToken(value) {
+  // 省略仅保留给底层模板兼容调用；manager 的 probe 路径总会传入已解析绝对路径或 null。
+  if (value === undefined) return 'dsh';
+  if (value === null || value === '') return '';
+  if (typeof value !== 'string' || !/^\/[^\0\r\n]*$/u.test(value)) {
+    throw new DshError('VALIDATION', 'dshPath 必须是不含换行的绝对路径');
+  }
+  return shq(value);
+}
+
+/** 配置路径由 manager 注入，其余候选均在目标 shell 内按优先级解析。
+ *  dshPath=null 保持自动探测；显式路径也要把同目录加入 PATH，供 /usr/bin/env node shebang 使用。 */
 export function buildProbeScript({ dshPath = null } = {}) {
-  const explicit = dshPath === null ? [] : [
-    `DSH_EXPLICIT=${workdirToken(dshPath)}`,
-    'PATH=$(dirname "$DSH_EXPLICIT"):$PATH',
+  const configured = dshPathToken(dshPath);
+  const pathPrepend = dshPath === null ? [] : [
+    'PATH=$(dirname "$CONFIG_DSH_PATH"):$PATH',
     'export PATH',
   ];
-  const dshBin = dshPath === null
-    ? 'echo "DSH_BIN=$(command -v dsh || echo MISSING)"'
-    : 'if [ -x "$DSH_EXPLICIT" ]; then printf "DSH_BIN=%s\\n" "$DSH_EXPLICIT"; else echo "DSH_BIN=MISSING"; fi';
-  const dshVersion = dshPath === null
-    ? 'if command -v dsh >/dev/null 2>&1; then echo "DSH_VERSION=$(dsh --version 2>/dev/null | head -n 1)"; fi'
-    : 'if [ -x "$DSH_EXPLICIT" ]; then echo "DSH_VERSION=$("$DSH_EXPLICIT" --version 2>/dev/null | head -n 1)"; fi';
   return [
-    ...explicit,
-    dshBin,
-    dshVersion,
+    `CONFIG_DSH_PATH=${configured}`,
+    ...pathPrepend,
+    'PATH_DSH=; if command -v dsh >/dev/null 2>&1; then PATH_DSH=$(command -v dsh 2>/dev/null | head -n 1); case "$PATH_DSH" in /*) ;; *) PATH_DSH=;; esac; fi',
     'H="${DSH_HOME:-$HOME/.dsh}"',
     "printf 'DSH_HOME=%s\\n' \"$H\"",
     'if [ -d "$H/profiles/web" ]; then echo "PROFILE_WEB=yes"; else echo "PROFILE_WEB=no"; fi',
