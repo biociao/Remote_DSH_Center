@@ -101,6 +101,13 @@ export function createHostTable({ store, actions }) {
     onClick: () => actions.removeHosts([...selected]),
   });
   removeButton.dataset.act = 'remove-selected';
+  const clearOrphanedButton = button('清空 orphaned', {
+    variant: 'danger',
+    onClick: () => actions.clearOrphaned(),
+  });
+  clearOrphanedButton.classList.add('clear-orphaned');
+  clearOrphanedButton.dataset.act = 'clear-orphaned';
+  clearOrphanedButton.setAttribute('aria-label', '清空 orphaned 主机');
   const localName = field('本机名称（可选）', input('text', '', {
     placeholder: '留空使用系统主机名',
     autocomplete: 'off',
@@ -139,7 +146,7 @@ export function createHostTable({ store, actions }) {
     el('header.card-header', {}, [
       el('h2', { text: '主机' }),
       el('div.row-actions', {}, [
-        countLabel, removeButton, localName.root, addLocalButton,
+        countLabel, clearOrphanedButton, removeButton, localName.root, addLocalButton,
         remoteName.root, remoteUser.root, remoteDshPath.root, addRemoteButton,
       ]),
     ]),
@@ -218,6 +225,13 @@ export function createHostTable({ store, actions }) {
     selectAll.disabled = hosts.length === 0;
     removeButton.hidden = selected.size === 0;
     removeButton.disabled = !store.canWrite() || store.isPending('hosts:remove');
+    const orphanedCount = hosts.filter((host) => !host.local && host.orphaned).length;
+    clearOrphanedButton.disabled = orphanedCount === 0
+      || !store.canWrite()
+      || store.isPending('orphaned:clear');
+    clearOrphanedButton.title = orphanedCount === 0
+      ? '没有需要清空的 orphaned 主机'
+      : (!store.canWrite() ? '与 manager 失联，写操作已暂停' : '删除配置中的 orphaned 条目并清理运行记录');
     const addRemoteDisabled = !store.canWrite() || store.isPending('remote:create');
     remoteName.input.disabled = addRemoteDisabled;
     remoteUser.input.disabled = addRemoteDisabled;

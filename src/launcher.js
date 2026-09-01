@@ -279,7 +279,7 @@ async function tailQuiet(host, logName, signal, local) {
  */
 export async function runLaunchSequence(host, spec, { signal, local } = {}) {
   const {
-    port, env = {}, extraArgs = [], patchRemoteNames = [], workdir = null, dshPath = '/usr/bin/dsh',
+    port, env = {}, extraArgs = [], patchRemoteNames = [], workdir = null, dshPath = null,
   } = spec;
   const useLocal = isLocalHost(host, local);
   const attempts = [];
@@ -447,7 +447,7 @@ export function start(name) {
         dshPath: view.config.dshPath
           ?? view.probe?.dshPath
           ?? store.getHostState(name)?.dshPath
-          ?? '/usr/bin/dsh',
+          ?? null,
         env: view.config.inject.env,
         extraArgs: view.config.inject.extraArgs,
         patchRemoteNames: sync.remoteNames,
