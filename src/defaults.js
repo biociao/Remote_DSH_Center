@@ -17,10 +17,14 @@ export const FACTORY_DEFAULTS = Object.freeze({
     // 放 defaults 而非顶层，是为了复用既有的 defaults 保存通道，不新增 API 端点。
     hostOrder: Object.freeze([]),
   }),
+  cleanup: Object.freeze({
+    rules: Object.freeze(['owned-web', 'test-workdir']),
+  }),
   hostDefaults: Object.freeze({
     local: false,
     enabled: true,
     autoStart: false,
+    dshPath: null,
     localPort: null,
     remoteWebPort: null,
     // null = 不注入 cd，远端 dsh 以 sshd 给的初始目录（$HOME）启动
@@ -39,6 +43,7 @@ export function newHostConfig() {
     local: FACTORY_DEFAULTS.hostDefaults.local,
     enabled: FACTORY_DEFAULTS.hostDefaults.enabled,
     autoStart: FACTORY_DEFAULTS.hostDefaults.autoStart,
+    dshPath: FACTORY_DEFAULTS.hostDefaults.dshPath,
     localPort: FACTORY_DEFAULTS.hostDefaults.localPort,
     remoteWebPort: FACTORY_DEFAULTS.hostDefaults.remoteWebPort,
     workdir: FACTORY_DEFAULTS.hostDefaults.workdir,
@@ -57,6 +62,7 @@ export function newFactoryConfig() {
       localPortRange: [...FACTORY_DEFAULTS.defaults.localPortRange],
       hostOrder: [...FACTORY_DEFAULTS.defaults.hostOrder],
     },
+    cleanup: { rules: [...FACTORY_DEFAULTS.cleanup.rules] },
     hosts: {},
   };
 }

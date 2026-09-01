@@ -25,7 +25,7 @@ export function isManagedHost(host) {
 }
 
 export function isPrimaryHost(host) {
-  return isHostEnabled(host) && isPrimaryHostPhase(host?.phase);
+  return isHostEnabled(host) && !host?.orphaned && isPrimaryHostPhase(host?.phase);
 }
 
 /**
@@ -75,6 +75,7 @@ const ACTIONS = Object.freeze({
  * running 的竞态请求由 actions.js 判为「已自行恢复」。
  */
 export function allowedHostActions(host) {
+  if (host?.orphaned === true && host.local !== true) return Object.freeze(['open'])
   switch (host?.phase) {
     case 'ready':
       return ACTIONS.ready;

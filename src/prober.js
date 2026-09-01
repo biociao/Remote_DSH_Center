@@ -3,10 +3,16 @@
  */
 
 import { logEvent } from './lib/bus.js';
-import { buildProbeScript, kvOne, parseProtoOutput } from './lib/proto.js';
+import {
+  buildManualPortProbeScript,
+  buildProbeScript,
+  kvOne,
+  parseManualPortBlock,
+  parseProtoOutput,
+} from './lib/proto.js';
 import { hostQueue, localExec, sshExec } from './lib/ssh.js';
 import { PROBE_PROTECTED_PHASES } from './lib/machine.js';
-import { asDshError } from './lib/errors.js';
+import { DshError, asDshError } from './lib/errors.js';
 import { mapPool } from './lib/pool.js';
 import { SSH_FANOUT_LIMIT } from './defaults.js';
 import * as store from './store.js';
@@ -15,8 +21,9 @@ import * as store from './store.js';
  * @typedef {{ok:boolean, phase:'ready'|'no_dsh'|'unreachable', dshPath:string|null,
  *   version:string|null, dshHome:string|null, profileWeb:boolean, runningRaw:string,
  *   sniff:{paths:string[], loginPath:string|null, version:string|null, probePath:string|null},
+ *   dependencies:{binary:boolean, webProfile:boolean, bash:boolean, timeout:boolean},
  *   noDshReason:'missing-bin'|'no-web-profile'|null, stderr:string,
- *   manualInstances:{pid:number,args:string}[]}} ProbeResult
+ *   manualInstances:{pid:number,args:string,port:number|null}[]}} ProbeResult
  */
 
 /** `ps -eo pid,args` 行 → {pid, args}。 */
@@ -25,9 +32,17 @@ export function parseRunningBlock(raw) {
   for (const line of String(raw ?? '').split('\n')) {
     const m = /^\s*(\d+)\s+(.*\S)\s*$/.exec(line);
     if (!m) continue;
-    out.push({ pid: Number(m[1]), args: m[2] });
+    out.push({ pid: Number(m[1]), args: m[2], port: parseManualPort(m[2]) });
   }
   return out;
+}
+
+/** 从手动实例 argv 读取固定端口；0/缺失/非法均表示需要监听探测。 */
+export function parseManualPort(args) {
+  const match = /(?:^|\s)--port(?:=|\s+)(\d+)(?=\s|$)/.exec(String(args ?? ''));
+  if (!match) return null;
+  const port = Number(match[1]);
+  return port >= 1 && port <= 65535 ? port : null;
 }
 
 /** 嗅探块按行收集，空行只表示没有命中。 */
@@ -69,6 +84,12 @@ export function interpretProbe(res, { local = false } = {}) {
       version: null,
       probePath: null,
     },
+    dependencies: {
+      binary: false,
+      webProfile: false,
+      bash: false,
+      timeout: false,
+    },
     noDshReason: null,
     stderr: failureStderr,
     manualInstances: [],
@@ -90,6 +111,12 @@ export function interpretProbe(res, { local = false } = {}) {
   const manualInstances = parseRunningBlock(runningRaw);
   const dshHome = kvOne(out, 'DSH_HOME');
   const profileWeb = kvOne(out, 'PROFILE_WEB') === 'yes';
+  const dependencies = {
+    binary: Boolean(bin && bin !== 'MISSING'),
+    webProfile: profileWeb,
+    bash: kvOne(out, 'HAS_BASH') === 'yes',
+    timeout: kvOne(out, 'HAS_TIMEOUT') === 'yes',
+  };
   const sniff = {
     paths: parseSniffPaths(out.blocks.DSH_SNIFF),
     loginPath: kvOne(out, 'DSH_SNIFF_LOGIN') || null,
@@ -105,6 +132,7 @@ export function interpretProbe(res, { local = false } = {}) {
       dshHome,
       runningRaw,
       manualInstances,
+      dependencies,
       sniff,
       stderr: '',
     };
@@ -118,6 +146,7 @@ export function interpretProbe(res, { local = false } = {}) {
     profileWeb,
     runningRaw,
     manualInstances,
+    dependencies,
     sniff,
     stderr: '',
   };
@@ -133,12 +162,37 @@ export function interpretProbe(res, { local = false } = {}) {
  * 「操作收敛到 server」的前提不成立，见 11 §1.3 例外条款）。
  * @returns {Promise<ProbeResult>}
  */
-export async function probeOnce(host, { local = false, timeoutMs, signal } = {}) {
-  const command = buildProbeScript();
+export async function probeOnce(host, { local = false, timeoutMs, signal, dshPath } = {}) {
+  const configuredPath = dshPath === undefined
+    ? (store.getHostView(host)?.config?.dshPath ?? null)
+    : dshPath;
+  const command = buildProbeScript({ dshPath: configuredPath });
   const res = local
     ? await localExec(command, { timeoutMs, signal })
     : await sshExec(host, command, { timeoutMs, signal });
-  return interpretProbe(res, { local });
+  const result = interpretProbe(res, { local });
+  const ambiguous = result.manualInstances.filter((item) => item.port === null);
+  if (ambiguous.length === 0) return result;
+  const portProbe = local
+    ? await localExec(buildManualPortProbeScript(ambiguous.map((item) => item.pid)), { timeoutMs, signal })
+    : await sshExec(host, buildManualPortProbeScript(ambiguous.map((item) => item.pid)), { timeoutMs, signal });
+  if (portProbe.code !== 0 || portProbe.timedOut || portProbe.aborted) return result;
+  let ports;
+  try {
+    ports = parseManualPortBlock(
+      parseProtoOutput(portProbe.stdout, { requireDone: 'MANUAL_PORTS_DONE' }).blocks.MANUAL_PORTS ?? '',
+    );
+  } catch {
+    return result;
+  }
+  return {
+    ...result,
+    manualInstances: result.manualInstances.map((item) => (
+      item.port === null && ports.has(item.pid)
+        ? { ...item, port: ports.get(item.pid) }
+        : item
+    )),
+  };
 }
 
 /** 单行 stderr 摘要（长文本不进环形缓冲，11 §7.2）。 */
@@ -155,7 +209,12 @@ function summarize(stderr) {
 export async function probeHost(name) {
   return hostQueue(name).run('probe', async (signal) => {
     // 队首才重取 HostView：排队期间 reload 可能已换了配置快照，运输类型只认当前 config。
-    const local = store.getHostView(name)?.local === true;
+    const view = store.getHostView(name);
+    if (!view) throw new DshError('NOT_FOUND', `未知主机 ${name}`, { host: name });
+    if (!view.local && view.orphaned) {
+      throw new DshError('NOT_ALLOWED', `主机 ${name} 的 ssh config 已消失，禁止探测`, { host: name });
+    }
+    const local = view.local === true;
     const result = await probeOnce(name, { local, signal });
     applyProbe(name, result);
     return result;
@@ -180,10 +239,12 @@ export function applyProbe(name, result) {
       dshHome: result.dshHome,
       profileWeb: result.profileWeb,
       sniff: result.sniff,
+      dependencies: result.dependencies,
       noDshReason: result.noDshReason,
       at: new Date().toISOString(),
       errorSummary: result.phase === 'unreachable' ? summarize(result.stderr) : null,
     };
+    entry.dshPath = result.dshPath;
     entry.manualInstances = manual;
   });
 
@@ -199,7 +260,12 @@ export function applyProbe(name, result) {
  * @returns {Promise<PromiseSettledResult<any>[]>} 供 server 启动序列 await
  */
 export function probeAll(names = null) {
-  const targets = names ?? store.listHostNames();
+  const targets = (names ?? store.listHostNames())
+    .filter((name) => {
+      const view = store.getHostView(name);
+      return view?.config?.enabled !== false
+        && (!view?.orphaned || view?.local);
+    });
   // 有闸：主机一多，无闸的扇出会把共用跳板机的 MaxStartups 打爆（issue #85）
   return mapPool(targets, (name) => probeHost(name).catch((err) => {
     const e = asDshError(err);
