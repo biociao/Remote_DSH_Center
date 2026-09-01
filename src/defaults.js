@@ -13,6 +13,9 @@ export const FACTORY_DEFAULTS = Object.freeze({
   defaults: Object.freeze({
     remoteWebPort: 8899,
     localPortRange: Object.freeze([17701, 17799]),
+    // 顶部主机标签的自定义顺序（主机名数组）；空数组 = 按名字字母序。
+    // 放 defaults 而非顶层，是为了复用既有的 defaults 保存通道，不新增 API 端点。
+    hostOrder: Object.freeze([]),
   }),
   hostDefaults: Object.freeze({
     local: false,
@@ -52,6 +55,7 @@ export function newFactoryConfig() {
     defaults: {
       remoteWebPort: FACTORY_DEFAULTS.defaults.remoteWebPort,
       localPortRange: [...FACTORY_DEFAULTS.defaults.localPortRange],
+      hostOrder: [...FACTORY_DEFAULTS.defaults.hostOrder],
     },
     hosts: {},
   };
