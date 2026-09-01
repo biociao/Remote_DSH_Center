@@ -124,7 +124,7 @@ test('§1.2 拉起模板：双层算例逐字一致（12 §2.5）', () => {
   noRawNewline(s, 'launch');
   assert.equal(
     s,
-    'mkdir -p "$HOME/.dsh_center_remote/patches" || { echo "ERR=mkdir"; exit 9; }; LOG="$HOME/.dsh_center_remote/web-8899.log"; : > "$LOG"; DSH=dsh; if ! command -v dsh >/dev/null 2>&1; then DSH=; for D in "$HOME/.local/bin" "$HOME/bin" "$HOME/.npm-global/bin" /usr/local/bin /opt/homebrew/bin /snap/bin; do if [ -x "$D/dsh" ]; then DSH="$D/dsh"; break; fi; done; fi; if [ -z "$DSH" ] && command -v timeout >/dev/null 2>&1 && command -v bash >/dev/null 2>&1; then DSH=$(timeout 5 bash -lc \'command -v dsh\' 2>/dev/null | head -n 1); fi; if [ -z "$DSH" ]; then echo "ERR=no-dsh"; exit 7; fi; nohup env GREETING=\'hi there\' "$DSH" web --no-open --host 127.0.0.1 --port 8899 \'--verbose\' > "$LOG" 2>&1 < /dev/null & echo "PID=$!"',
+    'mkdir -p "$HOME/.dsh_center_remote/patches" || { echo "ERR=mkdir"; exit 9; }; LOG="$HOME/.dsh_center_remote/web-8899.log"; : > "$LOG"; DSH=dsh; if ! command -v dsh >/dev/null 2>&1; then DSH=; for D in "$HOME/.local/bin" "$HOME/bin" "$HOME/.npm-global/bin" /usr/local/bin /usr/bin /usr/sbin /bin /opt/homebrew/bin /snap/bin; do if [ -x "$D/dsh" ]; then DSH="$D/dsh"; break; fi; done; fi; if [ -z "$DSH" ] && command -v timeout >/dev/null 2>&1 && command -v bash >/dev/null 2>&1; then DSH=$(timeout 5 bash -lc \'command -v dsh\' 2>/dev/null | head -n 1); fi; if [ -z "$DSH" ]; then echo "ERR=no-dsh"; exit 7; fi; nohup env GREETING=\'hi there\' "$DSH" web --no-open --host 127.0.0.1 --port 8899 \'--verbose\' > "$LOG" 2>&1 < /dev/null & echo "PID=$!"',
   );
 });
 
@@ -149,7 +149,7 @@ test('§1.2 dsh 解析段：默认字面 dsh，嗅探清单与探测协议同一
   const s = buildLaunchScript({ logName: 'web-8899.log', port: 8899 });
   // command -v 成功时保持字面 `dsh`：argv[0] 不变，ps 指纹维持 `dsh web …` 旧形态（不误杀零回归）
   assert.ok(s.includes('; DSH=dsh; if ! command -v dsh >/dev/null 2>&1; then DSH=;'));
-  const sniffDirs = '"$HOME/.local/bin" "$HOME/bin" "$HOME/.npm-global/bin" /usr/local/bin /opt/homebrew/bin /snap/bin';
+  const sniffDirs = '"$HOME/.local/bin" "$HOME/bin" "$HOME/.npm-global/bin" /usr/local/bin /usr/bin /usr/sbin /bin /opt/homebrew/bin /snap/bin';
   assert.ok(s.includes(`for D in ${sniffDirs}; do`), '拉起模板的嗅探目录清单');
   assert.ok(buildProbeScript().includes(`for D in ${sniffDirs}; do`), '与 §1.1 探测协议同一份清单');
   assert.ok(s.includes("bash -lc 'command -v dsh'"), 'login shell 兜底（同探测）');
