@@ -274,6 +274,34 @@ test('§1.2 patch 与 extraArgs 拼装、--port 0 降级、注入值转义', () 
   assert.ok(s.includes("'x; rm -rf ~'"), '危险字符被中和为单个词');
 });
 
+test('§1.2 profile 分支：有值改用 --profile <name>，无值维持 dsh web 旧形态', () => {
+  // profile 有值：`web` 子命令消失，改为 dsh 全局旗标 --profile <name>，且排在 web app 旗标之前
+  const s = buildLaunchScript({ logName: 'web-3083.log', port: 3083, profile: 'dcs' });
+  assert.ok(s.includes('"$DSH" --profile \'dcs\' --no-open --host 127.0.0.1 --port 3083'), 'profile 分支命令形态');
+  assert.ok(!s.includes('"$DSH" web'), '有 profile 时不带 web 子命令');
+
+  // profile 为空串等价于 null：维持 `dsh web` 旧形态（指纹零回归）
+  assert.ok(buildLaunchScript({ logName: 'x.log', port: 8899, profile: '' }).includes('"$DSH" web'));
+  assert.equal(
+    buildLaunchScript({ logName: 'x.log', port: 8899, profile: '' }),
+    buildLaunchScript({ logName: 'x.log', port: 8899 }),
+  );
+
+  // --patch 仍作为启动器旗标紧跟 --profile 之后、web app 旗标之前
+  const p = buildLaunchScript({ logName: 'x.log', port: 3083, profile: 'dcs', patchRemoteNames: ['a.yml'] });
+  assert.ok(p.includes('"$DSH" --profile \'dcs\' --patch "$HOME/.dsh_center_remote/patches/a.yml" --no-open'));
+
+  // profile 名必须合法：以 - 开头或含空格的拒绝拼装
+  assert.throws(
+    () => buildLaunchScript({ logName: 'x.log', port: 3083, profile: '-foo' }),
+    (e) => e.code === 'VALIDATION',
+  );
+  assert.throws(
+    () => buildLaunchScript({ logName: 'x.log', port: 3083, profile: 'a b' }),
+    (e) => e.code === 'VALIDATION',
+  );
+});
+
 test('§1.2 非法注入值/文件名/端口一律拒绝拼装', () => {
   assert.throws(() => buildLaunchScript({ logName: 'a b.log', port: 8899 }), (e) => e.code === 'VALIDATION');
   assert.throws(() => buildLaunchScript({ logName: 'x.log', port: 'abc' }), (e) => e.code === 'VALIDATION');

@@ -18,6 +18,7 @@ import {
   parseDshPath,
   parseLines,
   parsePort,
+  parseProfile,
   parseSshUser,
   parseWorkdir,
   validatePatches,
@@ -28,8 +29,8 @@ import { buildInstallGuide } from '../install-guide.js';
 
 const LOG_LINES = 200;
 const REMOTE_CONFIG_NOTE = 'dsh Web 在目标主机运行；没有桌面环境也不影响内嵌页面。需要编辑 settings.yaml 时可直接使用下方“dsh 配置文件”编辑器，无需通过 SSH。';
-const LOCAL_PROFILE_NOTE = '本机多 profile：为每个本机实例设置不同 web 端口，并在“追加参数”中分别用两行填写 --profile 和 profile 名称。';
-const DRAFT_FIELDS = ['enabled', 'sshUser', 'dshPath', 'remoteWebPort', 'workdir', 'env', 'extraArgs', 'patches'];
+const LOCAL_PROFILE_NOTE = '本机多 profile：为每个本机实例设置不同 web 端口，并填写“dsh profile”（如 dcs）以 `--profile <name>` 启动，或改为在“追加参数”中用两行 --profile/名称。';
+const DRAFT_FIELDS = ['enabled', 'sshUser', 'dshPath', 'profile', 'remoteWebPort', 'workdir', 'env', 'extraArgs', 'patches'];
 const SETTINGS_UNKNOWN_CODES = new Set([
   'SSH_TIMEOUT',
   'SSH_UNREACHABLE',
@@ -43,6 +44,7 @@ const DRAFT_FIELD_LABELS = {
   enabled: '纳管状态',
   sshUser: 'SSH 用户',
   dshPath: 'dsh 路径',
+  profile: 'dsh profile',
   remoteWebPort: 'web 端口',
   workdir: '启动目录',
   env: '环境变量',
@@ -61,6 +63,7 @@ export function draftOf(config) {
     enabled: Boolean(config?.enabled),
     sshUser: config?.sshUser ?? '',
     dshPath: config?.dshPath ?? '',
+    profile: config?.profile ?? '',
     remoteWebPort: config?.remoteWebPort == null ? '' : String(config.remoteWebPort),
     workdir: config?.workdir ?? '',
     env: formatEnvLines(config?.inject?.env),
@@ -158,6 +161,10 @@ function comparableField(draft, key) {
   if (key === 'dshPath') {
     const parsed = parseDshPath(draft.dshPath);
     return parsed.ok ? parsed.value : draft.dshPath;
+  }
+  if (key === 'profile') {
+    const parsed = parseProfile(draft.profile);
+    return parsed.ok ? parsed.value : draft.profile;
   }
   if (key === 'workdir') {
     const parsed = parseWorkdir(draft.workdir);
@@ -279,7 +286,12 @@ export function createHostDrawer({ store, actions, confirm, setBackgroundInert =
   const dshPath = field('dsh 可执行文件', input('text', '', {
     placeholder: '留空自动查找，例如 ~/.local/bin/dsh', autocomplete: 'off',
   }));
-  const fields = [enabled, sshUser, dshPath, remotePort, workdir, env, extraArgs, patches];
+  const profileInput = field('dsh profile', input('text', '', {
+    placeholder: '留空 = web profile（dsh web）', autocomplete: 'off', spellcheck: 'false',
+  }), {
+    hint: '填 dsh profile 名（如 dcs）以 `--profile <name>` 启动；留空则用默认 `dsh web`。保存后需重启 dsh web 才生效。',
+  });
+  const fields = [enabled, sshUser, dshPath, profileInput, remotePort, workdir, env, extraArgs, patches];
 
   const saveBtn = button('保存', { variant: 'primary', compact: false, onClick: submit });
   const cancelBtn = button('放弃修改', { compact: false, onClick: () => resetDraft() });
@@ -364,7 +376,7 @@ export function createHostDrawer({ store, actions, confirm, setBackgroundInert =
 
   // 有校验器的字段（键名对齐 buildHostPatch 的 errors）
   const validated = {
-    sshUser, dshPath, remoteWebPort: remotePort, workdir, env, patches,
+    sshUser, dshPath, profile: profileInput, remoteWebPort: remotePort, workdir, env, patches,
   };
 
   // 离开字段就把它自己的校验结果说出来，不必等到点保存（issue #30）。
@@ -399,6 +411,7 @@ export function createHostDrawer({ store, actions, confirm, setBackgroundInert =
       workdir.root,
       sshUser.root,
       dshPath.root,
+      profileInput.root,
       workspaceSection,
       env.root,
       extraArgs.root,
@@ -457,6 +470,7 @@ export function createHostDrawer({ store, actions, confirm, setBackgroundInert =
       enabled: enabled.input.checked,
       sshUser: sshUser.input.value,
       dshPath: dshPath.input.value,
+      profile: profileInput.input.value,
       remoteWebPort: remotePort.input.value,
       workdir: workdir.input.value,
       env: env.input.value,
@@ -469,6 +483,7 @@ export function createHostDrawer({ store, actions, confirm, setBackgroundInert =
     enabled.input.checked = draft.enabled;
     sshUser.input.value = draft.sshUser ?? '';
     dshPath.input.value = draft.dshPath ?? '';
+    profileInput.input.value = draft.profile ?? '';
     remotePort.input.value = draft.remoteWebPort === null ? '' : String(draft.remoteWebPort);
     workdir.input.value = draft.workdir ?? '';
     env.input.value = draft.env;
@@ -1029,7 +1044,7 @@ export function createHostDrawer({ store, actions, confirm, setBackgroundInert =
     if (!built.ok) return;
 
     // 只提交真正改动的键：避免把没碰过的字段“全量替换”回当前显示值
-    const patch = diffPatch(built.value, { sshUser: null, dshPath: null, ...session.config });
+    const patch = diffPatch(built.value, { sshUser: null, dshPath: null, profile: null, ...session.config });
     if (Object.keys(patch).length === 0) {
       // raw 文本可能看似有变化，但 trim / 注释过滤后与服务端配置完全一致。
       // 回填 canonical draft，避免按钮与冲突提示继续暗示仍有内容可保存。

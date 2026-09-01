@@ -150,6 +150,26 @@ test('configSchema：workdir 可缺省（旧 config 兼容），给了就必须�
   }
 });
 
+test('configSchema：profile 可缺省，给了必须是合法 dsh profile 名', () => {
+  assert.equal(validate(configSchema, goodConfig()).ok, true, '缺 profile 键不该拦启动');
+
+  for (const good of [null, 'dcs', 'web', 'tui', 'my.profile_1']) {
+    const ok = goodConfig();
+    ok.hosts['gpu-1'].profile = good;
+    assert.equal(validate(configSchema, ok).ok, true, `应通过：${JSON.stringify(good)}`);
+  }
+  for (const bad of ['', '-dcs', '.hidden', 'a b', 'web; rm', 42]) {
+    const no = goodConfig();
+    no.hosts['gpu-1'].profile = bad;
+    assert.equal(validate(configSchema, no).ok, false, `应拒绝：${JSON.stringify(bad)}`);
+  }
+
+  // 配置 patch 也要过同样的 profile 校验
+  assert.equal(validate(hostConfigPatchSchema, { profile: 'dcs' }).ok, true);
+  assert.equal(validate(hostConfigPatchSchema, { profile: null }).ok, true);
+  assert.equal(validate(hostConfigPatchSchema, { profile: '-bad' }).ok, false);
+});
+
 test('stateSchema 宽松模式：允许 12 §4.4 的增补字段', () => {
   const state = {
     hosts: {

@@ -784,6 +784,8 @@ export function getHostView(name) {
       // null = 沿用 ssh config 的用户；非 null = 覆盖登录用户（多用户远端）
       sshUser: hostConfig.sshUser ?? null,
       dshPath: hostConfig.dshPath ?? null,
+      // null = 用 dsh 的 web profile（默认 `dsh web`）；非 null = 以 `--profile <name>` 启动
+      profile: hostConfig.profile ?? null,
       inject: {
         env: { ...hostConfig.inject.env },
         extraArgs: [...hostConfig.inject.extraArgs],

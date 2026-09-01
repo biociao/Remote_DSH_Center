@@ -50,6 +50,7 @@
 | LISTEN=unknown（远端无 ss）不作否定证据 | `tests/harness/harness.test.js`（no-ss） |
 | LAUNCH 模板逐字一致 + 双层转义算例 + `sh -n` 语法 | `tests/lib/proto.test.js` §1.2 |
 | LAUNCH `--patch` 紧跟 `web`（启动器旗标顺序） | `tests/lib/proto.test.js` §1.2、IT-09 |
+| LAUNCH profile 分支：有值改用 `--profile <name>`（且 `--patch` 仍紧跟其后、web app 旗标保留在尾部），无值维持 `dsh web` 旧形态；非法 profile 名拒拼装 | `tests/lib/proto.test.js` §1.2 |
 | LAUNCH 注入 env / extraArgs 抵达远端命令行与指纹 | `tests/harness/harness.test.js`、`tests/integration/flows.test.js`、IT-09 |
 | LAUNCH `workdir=null` 时模板逐字不含 cd（回归锁） | `tests/lib/proto.test.js` §1.2、`tests/harness/harness.test.js`、`tests/integration/flows.test.js` |
 | LAUNCH cd 段：绝对路径 / `~` 拼接抵达远端并还原真实目录 | `tests/lib/shq.test.js`（真 `sh` 还原为单个词）、`tests/lib/proto.test.js` §1.2、`tests/harness/harness.test.js` |
@@ -88,6 +89,7 @@
 | ssh / localExec / localCopy 共用在飞账本与关停闩：关停收敛、闩后不启动、`reopenSsh` 恢复；本机 copy/exec 错误不伪装成 SSH 错误 | `tests/lib/ssh.test.js`（`shutdownSsh`、`liveChildCount`、共享闩、`execFailure`） |
 | PROBE 与 LAUNCH/POLL/VERIFY/STOP/LOG 只按显式 `local` 分流；同一 proto builder 输出逐字一致，普通主机名不触发本机猜测 | `tests/prober.test.js`、`tests/launcher.test.js` |
 | 配置身份：旧 config 缺 `local` 按 false 迁移且不升版本；允许多个具名 `local:true` 实例且均要求 `localPort:null`，HostView 顶层回传身份；本机不与 SSH Host 合并 | `tests/lib/validate.test.js`、`tests/store.test.js`、`tests/contract/schemas.test.js` |
+| `dsh profile`（`--profile <name>`）：host config 可缺省/置 null（旧 config 迁移补 null）；合法名通过、以 -/. 开头或含空白拒绝（config 与 patch 双语校验）；HostView.config 透出，PUT /api/hosts/:name/config 接受并落盘，前端表单解析/脏判/合并一致 | `tests/lib/validate.test.js`、`tests/store.test.js`、`tests/api.test.js`、`tests/web/form.test.js`、`tests/web/drawer.test.js`、`tests/web/mount.test.js`、`tests/contract/schemas.test.js` |
 | `localExec` 以 `-c <raw proto body>` 进入本机垫片；与 fake-ssh 共用唯一协议 dispatcher，远端 HOME 仍为 `/root`、本机 HOME 为隔离临时目录 | `tests/harness/harness.test.js`（远端 `/root` 快照回归）、`tests/harness/local-flow.test.js` |
 | 本机 PROBE ready → LAUNCH/POLL/VERIFY → direct entry → `/api/health` 200 → HostView.mappedUrl 恒等映射 → STOP 后 ready 且进程/state 清空 | `tests/harness/local-flow.test.js`「本机全链」 |
 | 本机不 spawn fake-ssh `-N -L`、`tunnel._childPid() === null`；不调用映射端口池且 `config.localPort` 始终为 null | `tests/harness/local-flow.test.js`（transport 账本 + 端口池注入计数） |

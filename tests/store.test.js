@@ -75,6 +75,26 @@ test('createLocalHost 允许多个具名本机实例并保持各自独立配置'
   assert.deepEqual(store.getConfig().hosts['local-dcs'].inject.extraArgs, ['--profile', 'dcs']);
 });
 
+test('profile 字段：HostView 透出 config.profile，旧 config 迁移补 null', async (t) => {
+  // 新配置：显式 profile 在 HostView config 中透出
+  const { paths } = fixture(t);
+  await store.init({ pathsOverride: paths });
+  store.createLocalHost('local-dcs');
+  store.updateConfig((draft) => {
+    draft.hosts['local-dcs'].profile = 'dcs';
+    draft.hosts['local-dcs'].remoteWebPort = 3083;
+  });
+  const view = store.getHostView('local-dcs');
+  assert.equal(view.config.profile, 'dcs');
+
+  // 旧式 config（无 profile 键）→ migrate 补上默认值 null，且启动不被拦
+  const legacy = fullConfig();
+  const { paths: p2 } = fixture(t, { config: legacy });
+  await store.init({ pathsOverride: p2 });
+  assert.equal(store.getHostView('gpu-1').config.profile, null);
+  assert.equal(Object.hasOwn(store.getConfig().hosts['gpu-1'], 'profile'), true, 'migrate 应补齐 profile 键');
+});
+
 test('config 非法 JSON → 拒绝启动（不静默兜底）', async (t) => {
   const { paths } = fixture(t, { config: '{ not json' });
   await assert.rejects(

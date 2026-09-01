@@ -610,6 +610,8 @@ export function createHandler({ managerCtl }) {
         if ('workdir' in body) host.workdir = body.workdir;
         if ('sshUser' in body) host.sshUser = body.sshUser;
         if ('dshPath' in body) host.dshPath = body.dshPath;
+        // 与 workdir 同款「下次拉起生效」语义：profile 落盘后仍需重启实例才应用
+        if ('profile' in body) host.profile = body.profile;
         if ('inject' in body) {
           host.inject = {
             env: { ...body.inject.env },

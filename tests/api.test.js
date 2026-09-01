@@ -1034,6 +1034,23 @@ test('PUT host config：local 身份不可翻转，同值回显不写盘', async
   assert.equal(fs.readFileSync(configFile, 'utf8'), localBefore, '本机身份同值提交不重写配置');
 });
 
+test('PUT host config：接受并持久化 profile，非法值 400', async (t) => {
+  const ctx = await bootServer(t);
+  const configFile = path.join(ctx.harness.homeDir, 'config.json');
+
+  const set = await ctx.api('PUT', '/api/hosts/gpu-1/config', { profile: 'dcs' });
+  assertRest(set, { status: 200, schema: hostConfigPutResponse, label: 'PUT profile' });
+  assert.equal(set.json.host.config.profile, 'dcs');
+  assert.equal(JSON.parse(fs.readFileSync(configFile, 'utf8')).hosts['gpu-1'].profile, 'dcs', 'profile 落盘');
+
+  const clear = await ctx.api('PUT', '/api/hosts/gpu-1/config', { profile: null });
+  assert.equal(clear.json.host.config.profile, null, 'profile 可清空（回退 web）');
+
+  const bad = await ctx.api('PUT', '/api/hosts/gpu-1/config', { profile: '-bad' });
+  assert.equal(bad.status, 400);
+  assert.equal(bad.json.code, 'VALIDATION');
+});
+
 /** 只实现 hub 用到的 ServerResponse/IncomingMessage 面。 */
 function fakePair() {
   const writes = [];

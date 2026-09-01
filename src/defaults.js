@@ -26,6 +26,8 @@ export const FACTORY_DEFAULTS = Object.freeze({
     sshUser: null,
     // null = 按 PATH / 常见目录 / login shell 自动解析；非 null = 每主机显式 dsh 路径
     dshPath: null,
+    // null = 用 dsh 的 web profile（默认 `dsh web`）；非 null = 以 `--profile <name>` 启动
+    profile: null,
     inject: Object.freeze({
       env: Object.freeze({}),
       extraArgs: Object.freeze([]),
@@ -45,6 +47,7 @@ export function newHostConfig() {
     workdir: FACTORY_DEFAULTS.hostDefaults.workdir,
     sshUser: FACTORY_DEFAULTS.hostDefaults.sshUser,
     dshPath: FACTORY_DEFAULTS.hostDefaults.dshPath,
+    profile: FACTORY_DEFAULTS.hostDefaults.profile,
     inject: { env: {}, extraArgs: [], patches: [] },
   };
 }

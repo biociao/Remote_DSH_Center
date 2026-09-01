@@ -22,6 +22,7 @@ test('draftOf 把 config 摊平成文本表单', () => {
     enabled: true,
     sshUser: '',
     dshPath: '',
+    profile: '',
     remoteWebPort: '',
     workdir: '',
     env: 'A=1',

@@ -279,7 +279,7 @@ async function tailQuiet(host, logName, signal, local) {
  */
 export async function runLaunchSequence(host, spec, { signal, local } = {}) {
   const {
-    port, env = {}, extraArgs = [], patchRemoteNames = [], workdir = null, dshPath = null,
+    port, env = {}, extraArgs = [], patchRemoteNames = [], workdir = null, dshPath = null, profile = null,
   } = spec;
   const useLocal = isLocalHost(host, local);
   const attempts = [];
@@ -289,7 +289,7 @@ export async function runLaunchSequence(host, spec, { signal, local } = {}) {
 
   for (;;) {
     const launchSpec = {
-      logName, port: usePort, env, extraArgs, patchRemoteNames, workdir, dshPath,
+      logName, port: usePort, env, extraArgs, patchRemoteNames, workdir, dshPath, profile,
     };
     // S1
     let pid;
@@ -445,6 +445,7 @@ export function start(name) {
         patchRemoteNames: sync.remoteNames,
         workdir,
         dshPath: view.config.dshPath ?? null,
+        profile: view.config.profile ?? null,
       }, { local, signal });
 
       store.mutateHostState(name, (st) => {

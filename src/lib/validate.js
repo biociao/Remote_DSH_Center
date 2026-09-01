@@ -5,7 +5,7 @@
 
 import { DshError } from './errors.js';
 import { PHASES } from './machine.js';
-import { isWorkdirPath, isValidSshUser, SAFE_HOST_RE } from './shq.js';
+import { isWorkdirPath, isValidProfileName, isValidSshUser, SAFE_HOST_RE } from './shq.js';
 
 const ENV_KEY_RE = /^[A-Za-z_][A-Za-z0-9_]*$/;
 const SETTINGS_CHECKSUM_RE = /^cksum-v1:(0|[1-9][0-9]{0,9}):(0|[1-9][0-9]{0,6})$/u;
@@ -183,6 +183,10 @@ const workdirSchema = V.nullable(V.custom(
 const dshPathSchema = V.nullable(V.custom(
   (v) => isWorkdirPath(v) || '须为绝对路径（/ 开头）或 ~、~/… 形态',
 ));
+// null = 用 dsh 的 web profile（default 命令形态 `dsh web`）；非 null = 以 `--profile <name>` 启动
+const dshProfileSchema = V.nullable(V.custom(
+  (v) => isValidProfileName(v) || '须为合法 dsh profile 名（字母数字开头，可含 . _ -）',
+));
 
 /**
  * workdir/local 可缺省：configVersion 不升，旧 config 缺字段由 store.migrateConfig
@@ -200,9 +204,10 @@ const hostConfigSchema = V.obj(
       (v) => isValidSshUser(v) || '须为合法 ssh 登录用户名（只填用户部分，不以 - 开头）',
     )),
     dshPath: dshPathSchema,
+    profile: dshProfileSchema,
     inject: injectSchema,
   },
-  { optional: ['local', 'workdir', 'sshUser', 'dshPath'] },
+  { optional: ['local', 'workdir', 'sshUser', 'dshPath', 'profile'] },
 );
 
 const hostsSchema = V.all(
@@ -298,9 +303,10 @@ export const hostConfigPatchSchema = V.obj(
       (v) => isValidSshUser(v) || '须为合法 ssh 登录用户名（只填用户部分，不以 - 开头）',
     )),
     dshPath: dshPathSchema,
+    profile: dshProfileSchema,
     inject: injectSchema,
   },
-  { optional: ['local', 'enabled', 'autoStart', 'remoteWebPort', 'workdir', 'sshUser', 'dshPath', 'inject'] },
+  { optional: ['local', 'enabled', 'autoStart', 'remoteWebPort', 'workdir', 'sshUser', 'dshPath', 'profile', 'inject'] },
 );
 
 const safeHostNameSchema = V.all(

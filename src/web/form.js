@@ -105,6 +105,18 @@ export function parseSshUser(raw) {
   return { ok: true, value };
 }
 
+/** dsh profile 名（`--profile <name>`）。留空 = null = 用 dsh 的 web profile。 */
+export const PROFILE_RE = /^[A-Za-z0-9][A-Za-z0-9._-]*$/;
+
+export function parseProfile(raw) {
+  const value = String(raw ?? '').trim();
+  if (value === '') return { ok: true, value: null };
+  if (!PROFILE_RE.test(value) || value.startsWith('-') || value.startsWith('.')) {
+    return { ok: false, error: '只填 dsh profile 名（字母数字开头，可含 . _ -），例如 dcs、tui' };
+  }
+  return { ok: true, value };
+}
+
 /** patches 必须是绝对路径（本机文件才可能被 scp 上去）。 */
 export function validatePatches(list) {
   for (const p of list) {
@@ -116,7 +128,7 @@ export function validatePatches(list) {
 /**
  * 主机注入表单 → PUT /api/hosts/:name/config 请求体。
  * @param {{enabled:boolean, remoteWebPort:string, workdir:string, sshUser:string, dshPath:string,
- *          env:string, extraArgs:string, patches:string}} raw
+ *          profile:string, env:string, extraArgs:string, patches:string}} raw
  */
 export function buildHostPatch(raw) {
   const errors = {};
@@ -131,6 +143,9 @@ export function buildHostPatch(raw) {
 
   const dshPath = parseDshPath(raw.dshPath);
   if (!dshPath.ok) errors.dshPath = dshPath.error;
+
+  const profile = parseProfile(raw.profile);
+  if (!profile.ok) errors.profile = profile.error;
 
   const env = parseEnvLines(raw.env);
   if (!env.ok) errors.env = env.error;
@@ -147,6 +162,7 @@ export function buildHostPatch(raw) {
       workdir: workdir.value,
       sshUser: sshUser.value,
       dshPath: dshPath.value,
+      profile: profile.value,
       inject: { env: env.value, extraArgs: parseLines(raw.extraArgs), patches: patches.value },
     },
   };

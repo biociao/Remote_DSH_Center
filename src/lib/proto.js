@@ -7,7 +7,7 @@
  */
 
 import { DshError } from './errors.js';
-import { assertEnvKey, assertInt, assertSafeName, shq, workdirToken } from './shq.js';
+import { assertEnvKey, assertInt, assertProfileName, assertSafeName, shq, workdirToken } from './shq.js';
 import { REMOTE_DIR } from '../defaults.js';
 
 /** 超时与轮询参数（12 §3 汇总）——集中此处便于调优。 */
@@ -77,13 +77,14 @@ export function buildProbeScript({ dshPath = null } = {}) {
 /**
  * @param {{logName:string, port:number|'0', env?:Record<string,string>,
  *          patchRemoteNames?:string[], extraArgs?:string[], workdir?:string|null,
- *          dshPath?:string|null}} p
+ *          dshPath?:string|null, profile?:string|null}} p
  */
 export function buildLaunchScript({
-  logName, port, env = {}, patchRemoteNames = [], extraArgs = [], workdir = null, dshPath = null,
+  logName, port, env = {}, patchRemoteNames = [], extraArgs = [], workdir = null, dshPath = null, profile = null,
 }) {
   assertSafeName(logName);
   const portTok = assertInt(port, { min: 1, max: 65535, allowZero: true });
+  if (profile != null && profile !== '') assertProfileName(profile);
 
   let envp = '';
   const envEntries = Object.entries(env);
@@ -133,10 +134,17 @@ export function buildLaunchScript({
     ...(cdStmt ? [cdStmt] : []),
     ...dshResolve,
   ].join('; ');
-  // --patch 是 dsh 启动器自己的旗标，必须紧跟 `web` 排在 web app 旗标之前：真机
+  // boot 段：profile=null 保持 `dsh web …` 旧形态（`web` 是 --profile web 的别名，argv[0]
+  // 与指纹均不变化，不误杀零回归）；profile 有值改用 `dsh --profile <name>` —— 因为 `--profile`
+  // 是 dsh 全局旗标，放 `web` 子命令后会被 passThroughOptions 当作 web app 参数透传、无法切 profile
+  // （dsh bin.js：`web` 自带 profile=web，且 web 子命令拒绝父级 --profile）。真机实测两种放法都不切。
+  const boot = profile == null || profile === ''
+    ? '"$DSH" web'
+    : `"$DSH" --profile ${shq(profile)}`;
+  // --patch 是 dsh 启动器自己的旗标，必须紧跟 boot 段排在 web app 旗标之前：真机
   // （dsh 0.1.0-rc.7）上 `dsh web --no-open ... --patch P` 会被 web app 判为
   // unknown option '--patch' 而直接退出。extraArgs 反过来是 app 参数，仍留在尾部。
-  const launch = `nohup ${envp}"$DSH" web${patchArgs} --no-open --host 127.0.0.1 --port ${portTok}${extra} > "$LOG" 2>&1 < /dev/null &`;
+  const launch = `nohup ${envp}${boot}${patchArgs} --no-open --host 127.0.0.1 --port ${portTok}${extra} > "$LOG" 2>&1 < /dev/null &`;
   return `${prelude}; ${launch} echo "PID=$!"`;
 }
 
