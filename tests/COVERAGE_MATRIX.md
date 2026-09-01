@@ -598,6 +598,7 @@ plugin/）；其测试由 `plugin/tests`（`npm run verify` 内含）+ CI 的 pl
 | `ERR:LOCAL_EXEC_FAILED` | `tests/lib/ssh.test.js`、`tests/settings-file.test.js` |
 | `ERR:LOCAL_COPY_FAILED` | `tests/lib/ssh.test.js`、`tests/patchsync.test.js` |
 | `ERR:LOCAL_HOST_EXISTS` | `tests/api.test.js` |
+| `ERR:ALREADY_EXISTS` | `tests/api.test.js`、`tests/store.test.js` |
 | `ERR:LOCAL_NAME_CONFLICT` | `tests/api.test.js` |
 | `ERR:PROTO_PARSE` | `tests/lib/proto.test.js`、`tests/monitor.test.js` |
 | `ERR:SETTINGS_TOO_LARGE` | `tests/settings-file.test.js`、`tests/integration/settings.test.js` |
