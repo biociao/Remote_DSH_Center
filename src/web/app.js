@@ -14,10 +14,12 @@ import {
 } from './router.js';
 import { button, clear, el } from './utils.js';
 import { hostPhaseMeta } from './host-presentation.js';
+import { isHostEnabled } from './host-rules.js';
 import { createConfirmDialog } from './components/confirm-dialog.js';
 import { createConfigSyncDialog } from './components/config-sync-dialog.js';
 import { createDefaultsCard } from './components/defaults-card.js';
 import { createEventPanel } from './components/event-panel.js';
+import { createFleetAnalysis } from './components/fleet-analysis.js';
 import { createHostDrawer } from './components/host-drawer.js';
 import { createHostTable } from './components/host-table.js';
 import { createHub } from './components/hub.js';
@@ -91,6 +93,7 @@ export function bootApp({ root = document.getElementById('app') } = {}) {
   const managerCard = createManagerCard({ store, actions });
   const defaultsCard = createDefaultsCard({ store, actions });
   const eventPanel = createEventPanel({ store });
+  const fleetAnalysis = createFleetAnalysis({ store });
   configSyncDialog = createConfigSyncDialog({ store, actions });
   dashboard.append(
     el('div.card-header.manage-header', {}, [
@@ -99,6 +102,7 @@ export function bootApp({ root = document.getElementById('app') } = {}) {
     ]),
     hostTable.root,
     el('div.side-by-side', {}, [managerCard.root, defaultsCard.root]),
+    fleetAnalysis.root,
     eventPanel.root,
   );
 
@@ -116,7 +120,7 @@ export function bootApp({ root = document.getElementById('app') } = {}) {
     confirm: dialog.confirm,
     setBackgroundInert: (on) => {
       for (const node of backgroundLayers) node.inert = on;
-      // toast 仍须留在 aria-live 树里播报抽屉保存错误，只单独封住交互控件。
+      // toast 保留在 aria-live 树里并继续可点击，只退出 drawer 模态的 Tab 环。
       toasts.setModalBlocked(on);
     },
   });
@@ -175,7 +179,9 @@ export function bootApp({ root = document.getElementById('app') } = {}) {
     const writable = store.canWrite();
     probeAllBtn.disabled = !writable || store.isPending('probe-all');
     reloadBtn.disabled = !writable || store.isPending('config:reload');
-    configSyncBtn.disabled = !writable || store.listHosts().length < 2 || store.isPending('config:sync');
+    configSyncBtn.disabled = !writable
+      || store.listHosts().filter(isHostEnabled).length < 2
+      || store.isPending('config:sync');
   };
   store.on('connection:changed', syncConnection);
   store.on('pending:changed', syncConnection);
@@ -339,7 +345,7 @@ export function bootApp({ root = document.getElementById('app') } = {}) {
       detachLifecycle();
       sse.close();
       for (const c of [
-        hub, hostTable, managerCard, defaultsCard, eventPanel, tabbar, panes, drawer, wizard, toasts,
+        hub, hostTable, managerCard, defaultsCard, eventPanel, fleetAnalysis, tabbar, panes, drawer, wizard, toasts,
         configSyncDialog,
       ]) c.destroy();
     },
