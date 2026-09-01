@@ -5,6 +5,7 @@
  */
 
 import { CONFIG_SYNC_TARGET_LIMIT, HOST_WEB_RESTART_NOTICE } from '../actions.js';
+import { isHostEnabled } from '../host-rules.js';
 import { button, clear, el } from '../utils.js';
 
 const FIELD_LABEL = Object.freeze({
@@ -95,7 +96,7 @@ export function createConfigSyncDialog({ store, actions }) {
   let hostNamesKey = '';
 
   function hosts() {
-    return store.listHosts();
+    return store.listHosts().filter(isHostEnabled);
   }
 
   function selectionSignature() {
@@ -150,7 +151,11 @@ export function createConfigSyncDialog({ store, actions }) {
   function renderSourceOptions(hostList) {
     clear(sourceSelect);
     for (const host of hostList) {
-      sourceSelect.append(el('option', { value: host.name, text: host.name }));
+      sourceSelect.append(el('option', {
+        value: host.name,
+        text: host.name,
+        disabled: !host.local && host.orphaned,
+      }));
     }
     sourceSelect.value = source;
   }
@@ -166,7 +171,7 @@ export function createConfigSyncDialog({ store, actions }) {
         type: 'checkbox',
         dataset: { host: host.name },
         checked: targets.has(host.name),
-        disabled: host.name === source,
+        disabled: host.name === source || (!host.local && host.orphaned),
       });
       input.addEventListener('change', () => {
         if (input.checked && targets.size >= CONFIG_SYNC_TARGET_LIMIT) {
@@ -204,17 +209,23 @@ export function createConfigSyncDialog({ store, actions }) {
     const previousTargets = [...targets];
     const valid = new Set(names);
 
-    if (!valid.has(source)) source = names[0] ?? '';
+    const sourceHost = hostList.find((host) => host.name === source);
+    if (!sourceHost || (!sourceHost.local && sourceHost.orphaned)) {
+      source = hostList.find((host) => host.local || !host.orphaned)?.name ?? '';
+    }
     targets = new Set(
       previousTargets
-        .filter((name) => valid.has(name) && name !== source)
+        .filter((name) => {
+          const host = hostList.find((item) => item.name === name);
+          return valid.has(name) && name !== source && (host?.local || !host?.orphaned);
+        })
         .slice(0, CONFIG_SYNC_TARGET_LIMIT),
     );
     const selectionChanged = source !== previousSource
       || previousTargets.length !== targets.size
       || previousTargets.some((name) => !targets.has(name));
 
-    if (force || namesChanged) {
+    if (force || namesChanged || selectionChanged) {
       hostNamesKey = namesKey;
       renderSourceOptions(hostList);
       renderTargets(hostList);
@@ -231,7 +242,10 @@ export function createConfigSyncDialog({ store, actions }) {
     clearBtn.disabled = pending;
     closeBtn.disabled = pending;
     for (const input of targetList.querySelectorAll('input')) {
-      input.disabled = pending || input.dataset.host === source;
+      const host = store.getHost(input.dataset.host);
+      input.disabled = pending
+        || input.dataset.host === source
+        || (!host?.local && host?.orphaned);
     }
     previewBtn.disabled = pending || !canRequest;
     applyBtn.disabled = pending
@@ -244,7 +258,7 @@ export function createConfigSyncDialog({ store, actions }) {
   }
 
   function selectAll() {
-    const available = hosts().filter((host) => host.name !== source);
+    const available = hosts().filter((host) => host.name !== source && (host.local || !host.orphaned));
     targets = new Set(available.slice(0, CONFIG_SYNC_TARGET_LIMIT).map((host) => host.name));
     invalidate('选择已变化，请重新预览。');
     if (available.length > CONFIG_SYNC_TARGET_LIMIT) {

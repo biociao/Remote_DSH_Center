@@ -157,7 +157,7 @@ test('键盘激活 ready 标签后，starting 状态一到就接管焦点', asyn
 test('键盘链路：表格行回车进主机 → Esc 关抽屉 → 焦点回到触发处', async (t) => {
   const { dom } = await mount(t, { hosts: [running('gpu-1'), hostView('gpu-2')] });
 
-  const row = dom.app.querySelector('.host-table tbody tr');
+  const row = dom.app.querySelector('.host-table tbody tr[data-host]');
   assert.equal(row.getAttribute('tabindex'), '0', '行必须可聚焦');
   row.focus();
   key(row, 'Enter');
@@ -175,7 +175,7 @@ test('键盘链路：表格行回车进主机 → Esc 关抽屉 → 焦点回到
 
 test('抽屉注入配置内的 dsh Workspace 使用 h4 子标题层级', async (t) => {
   const { dom } = await mount(t, { hosts: [running('gpu-1')] });
-  dom.app.querySelector('.host-table tbody tr').click();
+  dom.app.querySelector('.host-table tbody tr[data-host]').click();
   await flush();
 
   const drawer = dom.app.querySelector('.host-drawer');
@@ -199,7 +199,7 @@ test('抽屉注入配置内的 dsh Workspace 使用 h4 子标题层级', async (
  */
 test('焦点在抽屉外时 Esc 也能关抽屉', async (t) => {
   const { dom } = await mount(t, { hosts: [running('gpu-1')] });
-  const row = dom.app.querySelector('.host-table tbody tr');
+  const row = dom.app.querySelector('.host-table tbody tr[data-host]');
   row.focus();
   key(row, 'Enter');
   await flush();
@@ -222,7 +222,7 @@ test('焦点在抽屉外时 Esc 也能关抽屉', async (t) => {
  */
 test('有改动时的 Esc：摘掉原生默认动作，框开着时不再插手', async (t) => {
   const { dom } = await mount(t);
-  dom.app.querySelector('.host-table tbody tr').click();
+  dom.app.querySelector('.host-table tbody tr[data-host]').click();
   await flush();
 
   const drawer = dom.app.querySelector('.host-drawer');
@@ -259,7 +259,7 @@ test('抽屉开着时后景 inert，关掉后恢复可交互', async (t) => {
   });
   assert.equal(background.some((n) => Boolean(n.inert)), false);
 
-  const row = dom.app.querySelector('.host-table tbody tr');
+  const row = dom.app.querySelector('.host-table tbody tr[data-host]');
   row.focus();
   key(row, 'Enter');
   await flush();
@@ -271,11 +271,11 @@ test('抽屉开着时后景 inert，关掉后恢复可交互', async (t) => {
 });
 
 /**
- * 回归（drawer-modal-toast-focus）：toast 要继续留在 aria-live 树里播报抽屉保存错误，
- * 但它的关闭/展开/复制控件不能成为 custom modal 的外部 Tab 落点。render() 会整片
- * 重建 toast，所以模态期间新来的通知也必须继承同一限制。
+ * 回归（center-toast-modal-interaction）：toast 要继续留在 aria-live 树里播报抽屉保存错误，
+ * 同时它的关闭/展开/复制控件在抽屉或确认框打开时仍必须可用；控件只退出
+ * drawer 模态的 Tab 环，不得被 pointer-events 禁用。
  */
-test('抽屉模态期间 toast 只播报不交互，动态新增与关闭恢复都同步', async (t) => {
+test('抽屉/确认框模态期间 Center toast 仍可关闭和复制', async (t) => {
   const { app, dom } = await mount(t, { hosts: [running('gpu-1')] });
   const region = dom.app.querySelector('.toast-region');
   const controls = () => [
@@ -292,15 +292,15 @@ test('抽屉模态期间 toast 只播报不交互，动态新增与关闭恢复�
   assert.equal(region.getAttribute('aria-live'), 'polite');
   assert.equal(Boolean(region.inert), false, '不能 inert 整个 live region，否则错误不会被读屏播报');
   assert.ok(controls().length >= 3, '带详情 toast 应有展开、复制与关闭控件');
-  assert.equal(controls().some((node) => node.getAttribute('tabindex') !== null), false);
+  assert.equal(controls().some((node) => node.disabled), false);
 
-  dom.app.querySelector('.host-table tbody tr').click();
+  dom.app.querySelector('.host-table tbody tr[data-host]').click();
   await flush();
   const drawer = dom.app.querySelector('.host-drawer');
-  assert.equal(region.getAttribute('data-modal-blocked'), 'true', '样式层需要明确的指针阻断状态');
   assert.equal(Boolean(region.inert), false, '模态期间仍须保留 aria-live 通知');
+  assert.equal(region.getAttribute('data-modal-blocked'), null, '模态不得关闭 toast 的交互层');
   assert.equal(controls().every((node) => node.getAttribute('tabindex') === '-1'), true,
-    '已有 toast 控件必须全部退出 Tab 环');
+    'toast 控件在抽屉期间应退出外部 Tab 环');
 
   app.store.addToast({
     level: 'error',
@@ -309,7 +309,13 @@ test('抽屉模态期间 toast 只播报不交互，动态新增与关闭恢复�
   });
   assert.match(region.textContent, /模态期间的新错误/);
   assert.equal(controls().every((node) => node.getAttribute('tabindex') === '-1'), true,
-    'render 重建后新增 toast 也不能漏回 Tab 环');
+    'render 重建后新增 toast 也必须退出外部 Tab 环');
+
+  const copyButton = region.querySelector('.detail-actions button');
+  copyButton.click();
+  region.querySelector('.toast-close').click();
+  await flush();
+  assert.doesNotMatch(region.textContent, /保存失败/u, '抽屉期间关闭 toast 必须生效');
 
   const envBox = drawer.querySelectorAll('textarea')[0];
   envBox.value = 'A=1';
@@ -326,15 +332,13 @@ test('抽屉模态期间 toast 只播报不交互，动态新增与关闭恢复�
   await flush();
   assert.equal(dialog.open, false);
   assert.equal(drawer.hidden, false);
-  assert.equal(region.getAttribute('data-modal-blocked'), 'true', '取消确认后抽屉仍开着，toast 仍须受阻');
+  assert.equal(region.getAttribute('data-modal-blocked'), null, '取消确认后 toast 仍须可交互');
 
   drawer.querySelectorAll('.btn').find((node) => node.textContent === '放弃修改').click();
   key(dom.document, 'Escape');
   await flush();
   assert.equal(drawer.hidden, true);
   assert.equal(region.getAttribute('data-modal-blocked'), null);
-  assert.equal(controls().some((node) => node.getAttribute('tabindex') !== null), false,
-    '抽屉关闭后 toast 控件应恢复原生 Tab 行为');
 });
 
 /**
@@ -351,7 +355,7 @@ test('状态更新不许把表内焦点甩掉：同一控件还在就留在它�
   });
   await flush();
 
-  const rowOf = (name) => dom.app.querySelectorAll('.host-table tbody tr').find((r) => r.dataset.host === name);
+  const rowOf = (name) => dom.app.querySelectorAll('.host-table tbody tr[data-host]').find((r) => r.dataset.host === name);
   const btnOf = (name, label) => rowOf(name).querySelectorAll('button').find((b) => b.textContent === label);
 
   // 焦点在 gpu-2 的行上，更新的是 gpu-1——凭什么动我
@@ -380,7 +384,7 @@ test('触发控件在更新后消失时，焦点退到它所在的那一行', as
   });
   await flush();
 
-  const row = () => dom.app.querySelector('.host-table tbody tr');
+  const row = () => dom.app.querySelector('.host-table tbody tr[data-host]');
   const stop = row().querySelectorAll('button').find((b) => b.textContent === '关停');
   assert.ok(stop, '运行中的主机该有关停键');
   stop.focus();
@@ -403,7 +407,7 @@ test('同名控件还在但已禁用时，焦点退到那一行而不是白焦�
   });
   await flush();
 
-  const row = () => dom.app.querySelector('.host-table tbody tr');
+  const row = () => dom.app.querySelector('.host-table tbody tr[data-host]');
   const probe = row().querySelectorAll('button').find((b) => b.textContent === '探测');
   probe.focus();
 

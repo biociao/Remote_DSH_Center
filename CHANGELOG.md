@@ -4,21 +4,51 @@
 不记实现细节。格式参考 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)，
 版本语义见 [CONTRIBUTING.md](CONTRIBUTING.md#版本语义)。
 
-## [0.6.0] - 2026-08-27
+## [Unreleased]
 
-### 新增
+## [0.8.0] - 2026-09-01
 
-- 主机探测新增非交互 PATH、常见用户态目录与受限 login shell 的 dsh 嗅探信息；
-  `dshc probe <host>` 和管理台 no_dsh 详情会给出场景化安装/配置指南。嗅探只用于诊断展示，
-  Center 仍不代装 dsh、web profile 或插件。
+### 修复
+
+- 没有 `ss` 的远端（两台目标 pod 均无 `ss`/`lsof`/`netstat`）现在会回落到
+  `/proc/net/tcp{,6}` 判定监听状态：复核的 `LISTEN` 不再恒为 `unknown`，
+  `--port 0` 手动实例的实际端口也能被发现。两者都不可得时仍回 `unknown`，
+  保持「unknown 不作否定证据」。
+- 舰队分析的语义摘要上界从 60s 提高到 120s。它是唯一跑本机模型的一步，
+  实测 100 组载荷约需 50s，原上界比通用上界（90s）还紧，导致正常舰队规模下
+  常态超时并静默降级为纯确定性聚合。
+- `acceptance:matrix` 的三处等待不再用与 `--timeout` 无关的固定上限封顶，
+  失败信息也会指出真实阶段（插件就绪 / DSH 建会话 / 注入 / 清理）而非一律
+  归到 Center 阶段。
+- 舰队分析卡片的「分析」按钮现在跟随写权限：与 manager 失联时按钮直接禁用并
+  给出与主机表一致的说明。此前按钮恒为可用态，失联时点击既不发请求也不出任何
+  提示，看起来像点了没反应。
 
 ### 文档
 
-- 使用手册新增 Agent Sidecar v0.7.0 下游集成契约：明确 C1–C5 清单、版本与远端
-  Python 兼容边界、`no_dsh` 与远端零安装/零常驻行为，并声明该集成不提供远端注入；
-  同时新增跨仓库 integration issue form，要求关联 Sidecar issue、双方版本、复现与期望行为。
+- 补齐英文手册的 “Pod-local E2E plugin topology (explicit operator path)” 节，
+  与中文手册对齐，明确 Center 的 SSH/tunnel 控制面、pod 本地 Sidecar 插件注入面
+  和 `scripts/deploy-to-pod.sh` 的归属边界。
 
-## [Unreleased]
+### 新增
+
+- 管理台新增 orphaned 主机安全清理：仅删除当前 SSH 配置已消失的配置与运行记录，
+  并在清理前后保留远端进程不误杀；orphaned 主机的远程动作、配置同步与 dsh
+  配置/Workspace 操作会被 manager 拒绝，同时页面明确提示 SSH 配置已消失；
+  清理接口为 `POST /api/hosts/clear-orphaned`。
+- `POST /api/reload` 现在会重新读取 SSH 配置并刷新 orphaned 状态；Center toast
+  在抽屉或对话框打开时仍可关闭和复制，并继续保留 `aria-live` 播报。
+
+- 新增 `acceptance:matrix` 五 agent 操作员验收入口，默认覆盖
+  `claude`、`codex`、`copilot`、`kimi` 和 `dsh`，提供有界并行/超时、fresh SSH
+  scan、两阶段插件注入回执和脱敏 JSON/Markdown 证据；fixture/dry-run 不计入真实通过。
+- 矩阵会在缺少 DSH 会话时通过官方 `session.create` / `session.prompt` 创建测试
+  会话，并将 persisted preset 导致的 `dsh_preset_unsupported` / HTTP 409 作为
+  fail-closed 合同结果保留，不自动清除 preset 或重试。
+- 新增已有 `dsh web` 的只读领养流程，支持 CLI/UI 确认、实际端口发现、持久化
+  `startedByUs: false` 状态和实例死亡自动解除，避免重复拉起或未授权关停。
+- 新增按需舰队聚类分析、Sidecar 最低版本握手、本机 DSH headless 摘要及
+  fail-closed 的确定性降级；新增有界的 owned-web/test-workdir 清理预览与显式应用。
 
 ### 新增
 
@@ -72,6 +102,20 @@
 - 真机验收收尾不再使用宽匹配 `pkill -f "dsh web"`，改为按本轮 PID 与完整命令行指纹
   逐字核对后停止，指纹不符时拒杀并记证。
 - 修复真机验收在共享节点端口占用、已有 launchd plist 或 patch 残留时无法安全重跑的路径。
+
+## [0.6.0] - 2026-08-27
+
+### 新增
+
+- 主机探测新增非交互 PATH、常见用户态目录与受限 login shell 的 dsh 嗅探信息；
+  `dshc probe <host>` 和管理台 no_dsh 详情会给出场景化安装/配置指南。嗅探只用于诊断展示，
+  Center 仍不代装 dsh、web profile 或插件。
+
+### 文档
+
+- 使用手册新增 Agent Sidecar v0.7.0 下游集成契约：明确 C1–C5 清单、版本与远端
+  Python 兼容边界、`no_dsh` 与远端零安装/零常驻行为，并声明该集成不提供远端注入；
+  同时新增跨仓库 integration issue form，要求关联 Sidecar issue、双方版本、复现与期望行为。
 
 ## [0.5.2] - 2026-08-26
 

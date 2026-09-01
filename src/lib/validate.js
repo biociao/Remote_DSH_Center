@@ -8,6 +8,7 @@ import { PHASES } from './machine.js';
 import { isWorkdirPath, isValidSshUser, SAFE_HOST_RE } from './shq.js';
 
 const ENV_KEY_RE = /^[A-Za-z_][A-Za-z0-9_]*$/;
+const CLEANUP_RULE_RE = /^(owned-web|test-workdir|stale-age|orphan-process)$/u;
 const SETTINGS_CHECKSUM_RE = /^cksum-v1:(0|[1-9][0-9]{0,9}):(0|[1-9][0-9]{0,6})$/u;
 const SETTINGS_CHECKSUM_MAX_BYTES = 512 * 1024;
 
@@ -184,6 +185,12 @@ const dshPathSchema = V.nullable(V.custom(
   (v) => isWorkdirPath(v) || '须为绝对路径（/ 开头）或 ~、~/… 形态',
 ));
 
+/** dshPath 只接受显式绝对路径，避免把命令名或换行带入远端脚本。 */
+const dshPathSchema = V.nullable(V.custom(
+  (v) => (typeof v === 'string' && /^\/[^\0\r\n]*$/u.test(v))
+    || '须为不含换行的绝对路径',
+));
+
 /**
  * workdir/local 可缺省：configVersion 不升，旧 config 缺字段由 store.migrateConfig
  * 按默认值补齐，故校验层不能因为「没有这个键」就拒绝启动。
@@ -193,6 +200,7 @@ const hostConfigSchema = V.obj(
     local: V.bool(),
     enabled: V.bool(),
     autoStart: V.bool(),
+    dshPath: dshPathSchema,
     localPort: V.nullable(port),
     remoteWebPort: V.nullable(port),
     workdir: workdirSchema,
@@ -234,6 +242,10 @@ const defaultsSchema = V.obj({
   remoteWebPort: port,
   localPortRange: localPortRangeSchema,
 });
+const cleanupRulesSchema = V.arr(V.str({ pattern: CLEANUP_RULE_RE, max: 32 }));
+const cleanupSchema = V.obj({
+  rules: cleanupRulesSchema,
+});
 
 // ── 四份 schema（11 §4.3） ──────────────────────────────────────────────
 
@@ -242,8 +254,9 @@ export const configSchema = V.obj({
   setupCompleted: V.bool(),
   manager: V.obj({ port }),
   defaults: defaultsSchema,
+  cleanup: cleanupSchema,
   hosts: hostsSchema,
-});
+}, { optional: ['cleanup'] });
 
 /** state 取宽松模式（extra=true）：12 §4.4 的增补字段允许出现。 */
 export const stateSchema = V.obj(
@@ -278,9 +291,10 @@ export const setupBodySchema = V.obj(
     setupCompleted: V.bool(),
     manager: V.obj({ port }),
     defaults: defaultsSchema,
+    cleanup: cleanupSchema,
     hosts: hostsSchema,
   },
-  { optional: ['configVersion', 'setupCompleted'] },
+  { optional: ['configVersion', 'setupCompleted', 'cleanup'] },
 );
 
 /**
@@ -292,6 +306,7 @@ export const hostConfigPatchSchema = V.obj(
     local: V.bool(),
     enabled: V.bool(),
     autoStart: V.bool(),
+    dshPath: dshPathSchema,
     remoteWebPort: V.nullable(port),
     workdir: workdirSchema,
     sshUser: V.nullable(V.custom(

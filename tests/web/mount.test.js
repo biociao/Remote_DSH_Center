@@ -121,7 +121,7 @@ test('首屏：拉 info/hosts/config，根路由落 hub 而不是管理台', asy
     ['/api/config', '/api/hosts', '/api/manager/info'],
   );
 
-  const rows = dom.app.querySelectorAll('.host-table tbody tr');
+  const rows = dom.app.querySelectorAll('.host-table tbody tr[data-host]');
   assert.equal(rows.length, 2);
   assert.match(rows[0].textContent, /gpu-1/);
   assert.match(rows[0].textContent, /可拉起/, '状态徽章要有中文文案');
@@ -140,6 +140,20 @@ test('首屏：拉 info/hosts/config，根路由落 hub 而不是管理台', asy
   assert.equal(dom.app.querySelector('.view-hub').hidden, false);
   assert.match(dom.app.querySelector('.view-hub').textContent, /选择一台主机开始工作/);
   assert.equal(dom.app.querySelector('.view-dashboard').hidden, true, '原管理台不能再占默认首屏');
+});
+
+test('管理表：orphaned 远程动作禁用并提供清空入口', async (t) => {
+  const { dom } = await mount(t, {
+    hosts: [hostView('orphan', { orphaned: true }), hostView('healthy')],
+  });
+  const row = dom.app.querySelector('tr[data-host="orphan"]');
+  assert.ok(row);
+  assert.match(row.textContent, /ssh config 已消失/u);
+  assert.equal([...row.querySelectorAll('button')].every((node) => node.disabled), true);
+
+  const clearButton = dom.app.querySelector('.clear-orphaned');
+  assert.ok(clearButton);
+  assert.equal(clearButton.disabled, false);
 });
 
 test('添加本机：名称输入可留空，默认名冲突后可填自定义名重试', async (t) => {
@@ -178,7 +192,7 @@ test('添加本机：名称输入可留空，默认名冲突后可填自定义�
 
   const creates = calls.filter((c) => c.path === '/api/hosts/local');
   assert.deepEqual(creates[1].body, { name: 'workstation-local' });
-  assert.equal(dom.app.querySelector('.host-table tbody tr').dataset.host, 'workstation-local');
+  assert.equal(dom.app.querySelector('.host-table tbody tr[data-host]').dataset.host, 'workstation-local');
 });
 
 test('已有本机时仍显示添加本机实例入口', async (t) => {
@@ -200,7 +214,7 @@ test('本机行使用共享状态、提示与直连映射语义', async (t) => {
     },
   });
   const { dom, es } = await mount(t, { hosts: [missing] });
-  const row = () => dom.app.querySelector('.host-table tbody tr');
+  const row = () => dom.app.querySelector('.host-table tbody tr[data-host]');
 
   assert.equal(row().querySelector('.phase-badge').textContent, '本机未安装或未配置');
   assert.equal(row().querySelector('.phase-hint').textContent, '本机未安装 dsh');
@@ -238,7 +252,7 @@ test('本机抽屉 badge 复用共享文案，不渗入 SSH/远端措辞', async
     probe: { ...hostView('workstation').probe, errorSummary: '本机命令执行失败' },
   });
   const { dom } = await mount(t, { hosts: [unavailable] });
-  dom.app.querySelector('.host-table tbody tr').click();
+  dom.app.querySelector('.host-table tbody tr[data-host]').click();
   await flush();
 
   const drawer = dom.app.querySelector('.host-drawer');
@@ -267,7 +281,7 @@ test('no_dsh 抽屉展示完整嗅探事实与安装指引，ready 后隐藏指�
     },
   });
   const { dom, es } = await mount(t, { hosts: [unavailable] });
-  dom.app.querySelector('.host-table tbody tr').click();
+  dom.app.querySelector('.host-table tbody tr[data-host]').click();
   await flush();
 
   const drawer = dom.app.querySelector('.host-drawer');
@@ -294,7 +308,7 @@ test('本机抽屉映射只在 URL 与 tunnel.localPort 齐全时展示 URL', as
     tunnel: { localPort: null, connected: true, reconnectAttempt: 0, suspendedReason: null },
   });
   const { dom, es } = await mount(t, { hosts: [missingPort] });
-  dom.app.querySelector('.host-table tbody tr').click();
+  dom.app.querySelector('.host-table tbody tr[data-host]').click();
   await flush();
 
   const drawer = dom.app.querySelector('.host-drawer');
@@ -388,7 +402,7 @@ test('SSE snapshot 到达后表格与标签栏同步', async (t) => {
   const tabs = dom.app.querySelectorAll('.host-tabs .tab');
   assert.deepEqual(tabs.map((tb) => tb.textContent.trim()), ['gpu-1', 'gpu-2'], 'ready 与 running 都应常驻标签栏');
 
-  const rows = dom.app.querySelectorAll('.host-table tbody tr');
+  const rows = dom.app.querySelectorAll('.host-table tbody tr[data-host]');
   assert.match(rows[0].textContent, /运行中/);
   assert.match(rows[0].textContent, /17701/);
 
@@ -399,7 +413,7 @@ test('SSE snapshot 到达后表格与标签栏同步', async (t) => {
 
 test('点行内「拉起」发请求并锁住按钮', async (t) => {
   const { dom, calls, app } = await mount(t);
-  const row = dom.app.querySelector('.host-table tbody tr');
+  const row = dom.app.querySelector('.host-table tbody tr[data-host]');
   const startBtn = row.querySelectorAll('.row-actions .btn').find((b) => b.textContent === '拉起');
   assert.ok(startBtn, '可拉起状态应有「拉起」按钮');
 
@@ -409,7 +423,7 @@ test('点行内「拉起」发请求并锁住按钮', async (t) => {
   assert.equal(calls.some((c) => c.path === '/api/hosts/gpu-1/start' && c.method === 'POST'), true);
   assert.equal(app.store.isPending('start', 'gpu-1'), true);
 
-  const after = dom.app.querySelector('.host-table tbody tr');
+  const after = dom.app.querySelector('.host-table tbody tr[data-host]');
   const busyBtn = after.querySelectorAll('.row-actions .btn').find((b) => b.textContent === '拉起');
   assert.equal(busyBtn.disabled, true, 'pending 期间冲突动作要禁用');
 });
@@ -793,6 +807,21 @@ test('批量配置入口随主机数、连接态与 config:sync pending 刷新',
   assert.equal(dialog.open, false, '入口禁用时已打开的原生 dialog 必须关闭');
   assert.equal(dom.document.activeElement, dom.app.querySelector('.manage-back'),
     '断线关闭后焦点要回到稳定导航，不能留在 disabled 入口或 body');
+});
+
+test('舰队分析入口随连接态开关，断线时不留可点却无反应的按钮', async (t) => {
+  const { app, dom } = await mount(t, { hash: '#/manage' });
+  const run = dom.app.querySelector('.fleet-analysis button');
+  assert.ok(run, '管理页应提供舰队分析入口');
+  assert.equal(run.disabled, false);
+
+  app.store.setConnection({ sse: 'offline', everOpened: true });
+  assert.equal(run.disabled, true, '断线后必须禁用，而不是留个点了没反应的按钮');
+  assert.match(run.title, /写操作已暂停/);
+
+  app.store.setConnection({ sse: 'open', resyncing: false });
+  assert.equal(run.disabled, false, '重连并校准后放开');
+  assert.equal(run.title, '');
 });
 
 test('批量配置 dialog：原生语义、焦点、源目标互斥与快捷选择完整', async (t) => {
@@ -1927,7 +1956,7 @@ test('标签菜单「在新窗口打开」只在有 mappedUrl 时启用并切断
 
 test('行点击打开抽屉；有脏草稿时关闭要确认', async (t) => {
   const { dom, calls } = await mount(t);
-  dom.app.querySelector('.host-table tbody tr').click();
+  dom.app.querySelector('.host-table tbody tr[data-host]').click();
   await flush();
 
   const drawer = dom.app.querySelector('.host-drawer');
@@ -3174,7 +3203,7 @@ test('事件面板：按主机筛选、折叠、清空，以及新出现的主�
 
 test('行内控件上的 Enter/Space 归控件自己，不去开抽屉', async (t) => {
   const { dom } = await mount(t);
-  const row = dom.app.querySelector('.host-table tbody tr');
+  const row = dom.app.querySelector('.host-table tbody tr[data-host]');
   const probe = row.querySelector('[data-act="probe"]');
   const toggle = row.querySelector('input[type="checkbox"]');
 
@@ -3196,7 +3225,7 @@ test('行内控件上的 Enter/Space 归控件自己，不去开抽屉', async (
 test('按住的那一下不许被重建吞掉：更新攒到松手后再刷', async (t) => {
   const { dom, es } = await mount(t);
   const table = dom.app.querySelector('.host-table-card');
-  const probe = () => dom.app.querySelector('.host-table tbody tr [data-act="probe"]');
+  const probe = () => dom.app.querySelector('.host-table tbody tr[data-host] [data-act="probe"]');
   const held = probe();
 
   // 鼠标与 Space 的原生激活都在「抬起」那一刻，要求按下抬起是同一个节点。
@@ -3222,7 +3251,7 @@ test('按住的那一下不许被重建吞掉：更新攒到松手后再刷', as
   keyHeld.dispatchEvent({ type: 'keyup', key: ' ', bubbles: true });
   await flush();
   assert.equal(
-    dom.app.querySelector('.host-table tbody tr').textContent.includes('运行中'),
+    dom.app.querySelector('.host-table tbody tr[data-host]').textContent.includes('运行中'),
     true,
     '松手后表格必须追上最新数据，不能停在按住那一刻',
   );
@@ -3236,7 +3265,7 @@ test('抽屉里的启动目录：改值只提交 workdir，非法值就地报错
       ? { ok: true, status: 200, text: async () => JSON.stringify({ host: saved }) }
       : null),
   });
-  dom.app.querySelector('.host-table tbody tr').click();
+  dom.app.querySelector('.host-table tbody tr[data-host]').click();
   await flush();
 
   const drawer = dom.app.querySelector('.host-drawer');
@@ -3280,7 +3309,7 @@ test('抽屉里的启动目录：改值只提交 workdir，非法值就地报错
  */
 test('错误提示跟着输入更新：改对了立刻灭，改坏了立刻换成新错', async (t) => {
   const { dom, calls } = await mount(t);
-  dom.app.querySelector('.host-table tbody tr').click();
+  dom.app.querySelector('.host-table tbody tr[data-host]').click();
   await flush();
 
   const drawer = dom.app.querySelector('.host-drawer');
@@ -3316,7 +3345,7 @@ test('错误提示跟着输入更新：改对了立刻灭，改坏了立刻换�
  */
 test('离开字段即校验：不必等到点保存才第一次知道填错了', async (t) => {
   const { dom } = await mount(t);
-  dom.app.querySelector('.host-table tbody tr').click();
+  dom.app.querySelector('.host-table tbody tr[data-host]').click();
   await flush();
 
   const drawer = dom.app.querySelector('.host-drawer');
@@ -3352,7 +3381,7 @@ test('抽屉里的「重启后生效」徽标：仅当运行实例与已存配�
   host.web = { ...host.web, workdir: '/root/a' };
 
   const { dom, es } = await mount(t, { hosts: [host] });
-  dom.app.querySelector('.host-table tbody tr').click();
+  dom.app.querySelector('.host-table tbody tr[data-host]').click();
   await flush();
 
   const drawer = dom.app.querySelector('.host-drawer');
@@ -3372,7 +3401,7 @@ test('抽屉里的「重启后生效」徽标：值一致时隐藏；实测工�
   const host = running('gpu-1');
   host.web = { ...host.web, cwd: '/root/proj' };
   const { dom } = await mount(t, { hosts: [host] });
-  dom.app.querySelector('.host-table tbody tr').click();
+  dom.app.querySelector('.host-table tbody tr[data-host]').click();
   await flush();
 
   const drawer = dom.app.querySelector('.host-drawer');
@@ -3384,7 +3413,7 @@ test('抽屉里的「重启后生效」徽标：值一致时隐藏；实测工�
 
 test('实测工作目录不可读时显示「—」，不编造值', async (t) => {
   const { dom } = await mount(t, { hosts: [running('gpu-1')] });
-  dom.app.querySelector('.host-table tbody tr').click();
+  dom.app.querySelector('.host-table tbody tr[data-host]').click();
   await flush();
 
   const rows = dom.app.querySelector('.probe-detail').querySelectorAll('dd').map((d) => d.textContent);

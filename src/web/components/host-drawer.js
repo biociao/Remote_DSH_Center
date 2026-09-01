@@ -5,7 +5,7 @@
  * 只在 config 真变了时给冲突提示（UI-26）。
  */
 
-import { DASH, button, clear, el, fmtAgo, phaseBadge, text } from '../utils.js';
+import { DASH, button, clear, copyText, el, fmtAgo, phaseBadge, text } from '../utils.js';
 import {
   buildHostPatch,
   deepEqual,
@@ -14,6 +14,7 @@ import {
   formatEnvLines,
   formatLines,
   input,
+  parseDshPath,
   parseEnvLines,
   parseDshPath,
   parseLines,
@@ -147,6 +148,10 @@ export function workspaceRegistrationState(host, {
 
 function comparableField(draft, key) {
   if (key === 'enabled') return Boolean(draft.enabled);
+  if (key === 'dshPath') {
+    const parsed = parseDshPath(draft.dshPath);
+    return parsed.ok ? parsed.value : draft.dshPath;
+  }
   if (key === 'remoteWebPort') {
     const parsed = parsePort(draft.remoteWebPort, { allowEmpty: true });
     return parsed.ok ? parsed.value : draft.remoteWebPort;
@@ -288,9 +293,12 @@ export function createHostDrawer({ store, actions, confirm, setBackgroundInert =
   const probeTitle = el('h3', { text: '探测详情' });
   const probeGuideSummary = el('p.install-guide-summary');
   const probeGuideSteps = el('ol.install-guide-steps');
+  const probeGuideChecks = el('ul.install-guide-checklist');
   const probeGuide = el('section.install-guide', { hidden: true }, [
     el('h3', { text: '安装与配置指引' }),
     probeGuideSummary,
+    el('p.section-note', { text: '以下是基于本次探测的依赖清单。命令仅可复制，不会由 Center 执行安装。' }),
+    probeGuideChecks,
     probeGuideSteps,
   ]);
 
@@ -979,8 +987,34 @@ export function createHostDrawer({ store, actions, confirm, setBackgroundInert =
         noDshReason: probe?.noDshReason,
         sniff: probe?.sniff,
         dshHome: probe?.dshHome,
+        dependencies: probe?.dependencies,
       });
       probeGuideSummary.textContent = guide.summary;
+      clear(probeGuideChecks);
+      for (const check of guide.checks ?? []) {
+        const commandNodes = (check.commands ?? []).map((command) => {
+          const copy = button('复制', {
+            onClick: async () => {
+              if (await copyText(command)) copy.textContent = '已复制';
+            },
+          });
+          copy.classList.add('install-guide-copy');
+          return el('div.install-guide-command', {}, [
+            el('code', { text: command }),
+            copy,
+          ]);
+        });
+        probeGuideChecks.append(el('li.install-guide-check', { dataset: { status: check.status } }, [
+          el('div', {}, [
+            el('strong', { text: check.label }),
+            el('span.install-guide-check-status', {
+              text: check.status === 'pass' ? '通过' : check.status === 'optional' ? '可选' : '待处理',
+            }),
+            el('small', { text: check.detail }),
+          ]),
+          ...commandNodes,
+        ]));
+      }
       clear(probeGuideSteps);
       for (const step of guide.steps) {
         probeGuideSteps.append(el('li', {
@@ -990,6 +1024,7 @@ export function createHostDrawer({ store, actions, confirm, setBackgroundInert =
       probeGuide.hidden = false;
     } else {
       probeGuide.hidden = true;
+      clear(probeGuideChecks);
       clear(probeGuideSteps);
       probeGuideSummary.textContent = '';
     }
