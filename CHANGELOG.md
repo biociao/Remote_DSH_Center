@@ -6,6 +6,16 @@
 
 ## [Unreleased]
 
+### 新增
+
+- 远程主机管理：`POST /api/hosts` 手动登记不在 `~/.ssh/config` 中的远程主机
+  （可选 `sshUser` 与 `dshPath`），`POST /api/hosts/remove` 批量删除主机
+  （运行中主机拒绝删除），主机表支持勾选后「删除所选」。
+
+### 修复
+
+- 重复登记同名主机现在返回 409 `ALREADY_EXISTS`（此前落入 500 兜底）。
+
 ## [0.9.1] - 2026-09-01
 
 ### 修复

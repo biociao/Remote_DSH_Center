@@ -14,7 +14,7 @@ import {
 import { hostActionSlots, isHostEnabled } from '../host-rules.js';
 import { field, input } from '../form.js';
 
-const COLUMNS = ['主机', '状态', 'dsh', '本机映射', 'PID', '自启', '操作'];
+const COLUMNS = ['', '主机', '状态', 'dsh', '本机映射', 'PID', '自启', '操作'];
 export const HOST_GROUPS = Object.freeze([
   Object.freeze({
     id: 'started',
@@ -88,16 +88,19 @@ export function createHostTable({ store, actions }) {
   const tbody = el('tbody');
   const empty = el('p.empty-hint', { text: '尚无主机：确认 ~/.ssh/config 中有可用 Host 条目，然后重新探测。' });
   const countLabel = el('span.card-sub.host-count');
-  const localName = field('本机名称（可选）', input('text', '', {
-    placeholder: '留空使用系统主机名',
-    autocomplete: 'off',
-    'aria-label': '本机名称（可选）',
-  }));
-  const addLocalButton = button('添加本机', {
-    onClick: () => actions.addLocalHost(localName.input.value),
+  const selected = new Set();
+  const selectAll = input('checkbox', false, { 'aria-label': '选择全部主机' });
+  selectAll.addEventListener('click', (event) => event.stopPropagation());
+  selectAll.addEventListener('change', () => {
+    selected.clear();
+    if (selectAll.checked) for (const host of store.listHosts()) selected.add(host.name);
+    renderAll();
   });
-  addLocalButton.dataset.act = 'add-local';
-  addLocalButton.setAttribute('aria-label', '添加本机');
+  const removeButton = button('删除所选', {
+    variant: 'danger',
+    onClick: () => actions.removeHosts([...selected]),
+  });
+  removeButton.dataset.act = 'remove-selected';
   const clearOrphanedButton = button('清空 orphaned', {
     variant: 'danger',
     onClick: () => actions.clearOrphaned(),
@@ -105,15 +108,51 @@ export function createHostTable({ store, actions }) {
   clearOrphanedButton.classList.add('clear-orphaned');
   clearOrphanedButton.dataset.act = 'clear-orphaned';
   clearOrphanedButton.setAttribute('aria-label', '清空 orphaned 主机');
+  const localName = field('本机名称（可选）', input('text', '', {
+    placeholder: '留空使用系统主机名',
+    autocomplete: 'off',
+    'aria-label': '本机名称（可选）',
+  }));
+  const addLocalButton = button('添加本机实例', {
+    onClick: () => actions.addLocalHost(localName.input.value),
+  });
+  addLocalButton.dataset.act = 'add-local';
+  addLocalButton.setAttribute('aria-label', '添加本机实例');
+  const remoteName = field('远端主机', input('text', '', {
+    placeholder: '主机名或地址', autocomplete: 'off', 'aria-label': '远端主机',
+  }));
+  const remoteUser = field('SSH 用户（可选）', input('text', '', {
+    placeholder: 'alice', autocomplete: 'off', 'aria-label': 'SSH 用户（可选）',
+  }));
+  const remoteDshPath = field('dsh 路径（可选）', input('text', '', {
+    placeholder: '~/.local/bin/dsh', autocomplete: 'off', 'aria-label': 'dsh 路径（可选）',
+  }));
+  const addRemoteButton = button('添加远端', {
+    onClick: async () => {
+      const result = await actions.addRemoteHost(remoteName.input.value, {
+        sshUser: remoteUser.input.value.trim() || null,
+        dshPath: remoteDshPath.input.value.trim() || null,
+      });
+      if (result?.host) {
+        remoteName.input.value = '';
+        remoteUser.input.value = '';
+        remoteDshPath.input.value = '';
+      }
+    },
+  });
+  addRemoteButton.dataset.act = 'add-remote';
 
   const root = el('section.card.host-table-card', {}, [
     el('header.card-header', {}, [
       el('h2', { text: '主机' }),
-      el('div.row-actions', {}, [countLabel, clearOrphanedButton, localName.root, addLocalButton]),
+      el('div.row-actions', {}, [
+        countLabel, clearOrphanedButton, removeButton, localName.root, addLocalButton,
+        remoteName.root, remoteUser.root, remoteDshPath.root, addRemoteButton,
+      ]),
     ]),
     el('div.table-scroll', {}, [
       el('table.host-table', {}, [
-        el('thead'),
+        el('thead', {}, [el('tr', {}, COLUMNS.map((c, index) => el('th', {}, index === 0 ? [selectAll] : [c])))]),
         tbody,
       ]),
     ]),
@@ -176,11 +215,16 @@ export function createHostTable({ store, actions }) {
 
   function syncHeader() {
     const hosts = store.listHosts();
+    for (const name of selected) if (!hosts.some((host) => host.name === name)) selected.delete(name);
     const loaded = store.state.hostsLoaded;
-    const hasLocal = hosts.some((host) => host.local === true);
-    const showAddLocal = loaded && !hasLocal;
+    const showAddLocal = loaded;
     const addLocalDisabled = !showAddLocal || !store.canWrite() || store.isPending('local:create');
     countLabel.textContent = hosts.length > 0 ? `${hosts.length} 台` : '';
+    selectAll.checked = hosts.length > 0 && selected.size === hosts.length;
+    selectAll.indeterminate = selected.size > 0 && selected.size < hosts.length;
+    selectAll.disabled = hosts.length === 0;
+    removeButton.hidden = selected.size === 0;
+    removeButton.disabled = !store.canWrite() || store.isPending('hosts:remove');
     const orphanedCount = hosts.filter((host) => !host.local && host.orphaned).length;
     clearOrphanedButton.disabled = orphanedCount === 0
       || !store.canWrite()
@@ -188,6 +232,11 @@ export function createHostTable({ store, actions }) {
     clearOrphanedButton.title = orphanedCount === 0
       ? '没有需要清空的 orphaned 主机'
       : (!store.canWrite() ? '与 manager 失联，写操作已暂停' : '删除配置中的 orphaned 条目并清理运行记录');
+    const addRemoteDisabled = !store.canWrite() || store.isPending('remote:create');
+    remoteName.input.disabled = addRemoteDisabled;
+    remoteUser.input.disabled = addRemoteDisabled;
+    remoteDshPath.input.disabled = addRemoteDisabled;
+    addRemoteButton.disabled = addRemoteDisabled;
     localName.root.hidden = !showAddLocal;
     localName.input.disabled = addLocalDisabled;
     addLocalButton.hidden = !showAddLocal;
@@ -235,6 +284,18 @@ export function createHostTable({ store, actions }) {
     });
 
     const ssh = host.sshInfo;
+    const selectedBox = input('checkbox', selected.has(host.name), {
+      'aria-label': `选择 ${host.name}`,
+      on: {
+        click: (event) => event.stopPropagation(),
+        change: (event) => {
+          if (event.target.checked) selected.add(host.name);
+          else selected.delete(host.name);
+          renderAll();
+        },
+      },
+    });
+    tr.append(el('td.select-cell', { on: { click: (event) => event.stopPropagation() } }, [selectedBox]));
     tr.append(el('td.host-cell', {}, [
       el('strong', { text: host.name }),
       host.local ? el('span.tag.tag-lock', { text: '本机' }) : null,
