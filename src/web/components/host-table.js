@@ -11,9 +11,78 @@ import {
 import {
   hostDshSummary, hostMappingSummary, hostPhaseHint, hostPhaseMeta,
 } from '../host-presentation.js';
+import { isHostEnabled } from '../host-rules.js';
 import { field, input } from '../form.js';
 
 const COLUMNS = ['主机', '状态', 'dsh', '本机映射', 'PID', '自启', '操作'];
+export const HOST_GROUPS = Object.freeze([
+  Object.freeze({
+    id: 'started',
+    label: '已启动',
+    phases: Object.freeze(['running', 'starting', 'reconnect', 'abnormal', 'degraded', 'crashed']),
+  }),
+  Object.freeze({ id: 'ready', label: '可拉起', phases: Object.freeze(['ready']) }),
+  Object.freeze({
+    id: 'missing-config',
+    label: '缺失配置',
+    phases: Object.freeze(['no_dsh', 'missing-config']),
+  }),
+  Object.freeze({ id: 'unreachable', label: '不可达', phases: Object.freeze(['unreachable', 'unknown']) }),
+  Object.freeze({ id: 'unmanaged', label: '未纳管', phases: Object.freeze([]) }),
+]);
+
+export function hostGroupId(host) {
+  if (!isHostEnabled(host)) return 'unmanaged';
+  if (host?.orphaned === true) return 'unreachable';
+  return HOST_GROUPS.find((group) => group.phases.includes(host?.phase))?.id ?? 'unreachable';
+}
+
+export function groupHostViews(hosts) {
+  const grouped = Object.fromEntries(HOST_GROUPS.map(({ id }) => [id, []]));
+  for (const host of hosts ?? []) grouped[hostGroupId(host)].push(host);
+  return grouped;
+}
+
+function sortValue(host, key) {
+  if (key === 'status') return hostPhaseMeta(host).label;
+  if (key === 'dsh') return host.probe?.dshPath ?? host.probe?.version ?? '';
+  if (key === 'pid') return host.web?.pid ?? Number.POSITIVE_INFINITY;
+  return host.name ?? '';
+}
+
+export function sortHostViews(hosts, key = 'name', direction = 'asc') {
+  const factor = direction === 'desc' ? -1 : 1;
+  return [...hosts].sort((a, b) => {
+    const left = sortValue(a, key);
+    const right = sortValue(b, key);
+    const result = typeof left === 'number' && typeof right === 'number'
+      ? left - right
+      : String(left).localeCompare(String(right));
+    return factor * (result || String(a.name).localeCompare(String(b.name)));
+  });
+}
+
+const COLLAPSE_STORAGE_KEY = 'dshc.host-table.collapsed-groups';
+
+function loadCollapsedGroups() {
+  try {
+    const parsed = JSON.parse(globalThis.localStorage?.getItem(COLLAPSE_STORAGE_KEY) ?? '{}');
+    return new Set(HOST_GROUPS.map(({ id }) => id).filter((id) => parsed?.[id] === true));
+  } catch {
+    return new Set();
+  }
+}
+
+function saveCollapsedGroups(collapsed) {
+  try {
+    globalThis.localStorage?.setItem(
+      COLLAPSE_STORAGE_KEY,
+      JSON.stringify(Object.fromEntries([...collapsed].map((id) => [id, true]))),
+    );
+  } catch {
+    // localStorage 不可用时折叠仍在当前页面内有效
+  }
+}
 
 export function createHostTable({ store, actions }) {
   const tbody = el('tbody');
@@ -29,15 +98,22 @@ export function createHostTable({ store, actions }) {
   });
   addLocalButton.dataset.act = 'add-local';
   addLocalButton.setAttribute('aria-label', '添加本机');
+  const clearOrphanedButton = button('清空 orphaned', {
+    variant: 'danger',
+    onClick: () => actions.clearOrphaned(),
+  });
+  clearOrphanedButton.classList.add('clear-orphaned');
+  clearOrphanedButton.dataset.act = 'clear-orphaned';
+  clearOrphanedButton.setAttribute('aria-label', '清空 orphaned 主机');
 
   const root = el('section.card.host-table-card', {}, [
     el('header.card-header', {}, [
       el('h2', { text: '主机' }),
-      el('div.row-actions', {}, [countLabel, localName.root, addLocalButton]),
+      el('div.row-actions', {}, [countLabel, clearOrphanedButton, localName.root, addLocalButton]),
     ]),
     el('div.table-scroll', {}, [
       el('table.host-table', {}, [
-        el('thead', {}, [el('tr', {}, COLUMNS.map((c) => el('th', { text: c })))]),
+        el('thead'),
         tbody,
       ]),
     ]),
@@ -46,6 +122,57 @@ export function createHostTable({ store, actions }) {
 
   /** @type {Map<string, HTMLTableRowElement>} */
   const rows = new Map();
+  let sortKey = 'name';
+  let sortDirection = 'asc';
+  const collapsedGroups = loadCollapsedGroups();
+  const thead = root.querySelector('thead');
+
+  function renderHead() {
+    clear(thead);
+    thead.append(el('tr', {}, COLUMNS.map((column) => {
+      const key = { 主机: 'name', 状态: 'status', dsh: 'dsh', PID: 'pid' }[column];
+      if (!key) return el('th', { text: column });
+      const active = key === sortKey;
+      const control = button(column, {
+        onClick: (event) => {
+          event.stopPropagation();
+          if (sortKey === key) sortDirection = sortDirection === 'asc' ? 'desc' : 'asc';
+          else {
+            sortKey = key;
+            sortDirection = 'asc';
+          }
+          keepFocus(renderAll);
+        },
+      });
+      control.classList.add('host-sort-button');
+      control.setAttribute('aria-sort', active ? sortDirection : 'none');
+      control.setAttribute('aria-label', `按${column}${active ? (sortDirection === 'asc' ? '升序' : '降序') : '排序'}`);
+      return el('th', {}, [control]);
+    })));
+  }
+
+  function renderGroupRow(group, count) {
+    const isCollapsed = collapsedGroups.has(group.id);
+    const toggle = button(`${group.label} (${count})`, {
+      compact: false,
+      onClick: () => {
+        if (collapsedGroups.has(group.id)) collapsedGroups.delete(group.id);
+        else collapsedGroups.add(group.id);
+        saveCollapsedGroups(collapsedGroups);
+        renderAll();
+      },
+    });
+    toggle.classList.add('host-group-toggle');
+    toggle.setAttribute('aria-expanded', String(!isCollapsed));
+    toggle.setAttribute('aria-controls', `host-group-${group.id}`);
+    toggle.dataset.group = group.id;
+    return el('tr.host-group-row', {
+      id: `host-group-${group.id}`,
+      dataset: { group: group.id, collapsed: String(isCollapsed) },
+    }, [
+      el('td', { colSpan: COLUMNS.length }, [toggle]),
+    ]);
+  }
 
   function syncHeader() {
     const hosts = store.listHosts();
@@ -54,6 +181,13 @@ export function createHostTable({ store, actions }) {
     const showAddLocal = loaded && !hasLocal;
     const addLocalDisabled = !showAddLocal || !store.canWrite() || store.isPending('local:create');
     countLabel.textContent = hosts.length > 0 ? `${hosts.length} 台` : '';
+    const orphanedCount = hosts.filter((host) => !host.local && host.orphaned).length;
+    clearOrphanedButton.disabled = orphanedCount === 0
+      || !store.canWrite()
+      || store.isPending('orphaned:clear');
+    clearOrphanedButton.title = orphanedCount === 0
+      ? '没有需要清空的 orphaned 主机'
+      : (!store.canWrite() ? '与 manager 失联，写操作已暂停' : '删除配置中的 orphaned 条目并清理运行记录');
     localName.root.hidden = !showAddLocal;
     localName.input.disabled = addLocalDisabled;
     addLocalButton.hidden = !showAddLocal;
@@ -65,36 +199,24 @@ export function createHostTable({ store, actions }) {
     clear(tbody);
     rows.clear();
     const hosts = store.listHosts();
-    for (const host of hosts) {
+    renderHead();
+    const grouped = groupHostViews(hosts);
+    for (const group of HOST_GROUPS) {
+      tbody.append(renderGroupRow(group, grouped[group.id].length));
+      if (collapsedGroups.has(group.id)) continue;
+      for (const host of sortHostViews(grouped[group.id], sortKey, sortDirection)) {
       const tr = renderRow(host);
       rows.set(host.name, tr);
       tbody.append(tr);
+      }
     }
     empty.hidden = hosts.length > 0;
     syncHeader();
   }
 
-  function renderOne(name) {
-    const host = store.getHost(name);
-    const existing = rows.get(name);
-    if (!host) {
-      existing?.remove();
-      rows.delete(name);
-      empty.hidden = rows.size > 0;
-      syncHeader();
-      return;
-    }
-    const fresh = renderRow(host);
-    if (existing) existing.replaceWith(fresh);
-    else tbody.append(fresh);
-    rows.set(name, fresh);
-    empty.hidden = rows.size > 0;
-    syncHeader();
-  }
-
   function renderRow(host) {
     const tr = el('tr', {
-      dataset: { host: host.name },
+      dataset: { host: host.name, group: hostGroupId(host) },
       tabindex: '0',
       on: {
         click: () => actions.openHostDrawer(host.name),
@@ -188,7 +310,11 @@ export function createHostTable({ store, actions }) {
       if (action === 'open') {
         return markAct('open', button(ACTION_LABEL.open, {
           variant: 'primary',
-          // 「打开」是读操作：断线与 pending 都不禁用（10 §3.2）
+          disabled: !writable || (!host.local && host.orphaned),
+          title: !writable
+            ? '与 manager 失联，写操作已暂停'
+            : ((!host.local && host.orphaned) ? 'ssh config 已消失，远程主机不可打开' : null),
+          // 「打开」通常是读操作；orphaned 没有可验证的远端身份，不能打开旧映射。
           onClick: (e) => {
             e.stopPropagation();
             actions.openHost(host.name);
@@ -197,8 +323,10 @@ export function createHostTable({ store, actions }) {
       }
       return markAct(action, button(ACTION_LABEL[action], {
         variant: action === 'stop' ? 'danger' : 'default',
-        disabled: busy || !writable,
-        title: !writable ? '与 manager 失联，写操作已暂停' : null,
+        disabled: busy || !writable || (!host.local && host.orphaned),
+        title: !writable
+          ? '与 manager 失联，写操作已暂停'
+          : ((!host.local && host.orphaned) ? 'ssh config 已消失，远程动作已禁用' : null),
         onClick: (e) => {
           e.stopPropagation();
           actions.hostAction(action, host.name);
@@ -278,7 +406,7 @@ export function createHostTable({ store, actions }) {
       const pending = queued;
       queued = null;
       if (pending === 'all') keepFocus(renderAll);
-      else if (pending) keepFocus(() => { for (const n of pending) renderOne(n); });
+      else if (pending) keepFocus(renderAll);
     }, 0);
   }
 
@@ -299,7 +427,7 @@ export function createHostTable({ store, actions }) {
 
   const offs = [
     store.on('hosts:reset', () => gated(null, () => keepFocus(renderAll))),
-    store.on('hosts:changed', (name) => gated(name, () => keepFocus(() => renderOne(name)))),
+    store.on('hosts:changed', () => gated(null, () => keepFocus(renderAll))),
     store.on('pending:changed', () => gated(null, () => keepFocus(renderAll))),
     store.on('connection:changed', () => gated(null, () => keepFocus(renderAll))),
   ];

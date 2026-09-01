@@ -26,22 +26,38 @@ const remotePath = (rel) => `$HOME/${REMOTE_DIR}/${rel}`;
 
 // ── §1.1 探测协议 ────────────────────────────────────────────────────────
 
-/** 无注入值，模板为常量。 */
-export function buildProbeScript() {
+function dshPathToken(value) {
+  // 省略仅保留给底层模板兼容调用；manager 的 start 路径总会传入已解析绝对路径。
+  if (value === undefined) return 'dsh';
+  if (value === null || value === '') return '';
+  if (typeof value !== 'string' || !/^\/[^\0\r\n]*$/u.test(value)) {
+    throw new DshError('VALIDATION', 'dshPath 必须是不含换行的绝对路径');
+  }
+  return shq(value);
+}
+
+/** 配置路径由 manager 注入，其余候选均在目标 shell 内按优先级解析。 */
+export function buildProbeScript({ dshPath = null } = {}) {
+  const configured = dshPathToken(dshPath);
   return [
-    'echo "DSH_BIN=$(command -v dsh || echo MISSING)"',
-    'if command -v dsh >/dev/null 2>&1; then echo "DSH_VERSION=$(dsh --version 2>/dev/null | head -n 1)"; fi',
+    `CONFIG_DSH_PATH=${configured}`,
+    'PATH_DSH=; if command -v dsh >/dev/null 2>&1; then PATH_DSH=$(command -v dsh 2>/dev/null | head -n 1); case "$PATH_DSH" in /*) ;; *) PATH_DSH=;; esac; fi',
     'H="${DSH_HOME:-$HOME/.dsh}"',
     "printf 'DSH_HOME=%s\\n' \"$H\"",
     'if [ -d "$H/profiles/web" ]; then echo "PROFILE_WEB=yes"; else echo "PROFILE_WEB=no"; fi',
     "printf 'PROBE_PATH=%s\\n' \"$PATH\"",
+    'if command -v bash >/dev/null 2>&1; then echo "HAS_BASH=yes"; else echo "HAS_BASH=no"; fi',
+    'if command -v timeout >/dev/null 2>&1; then echo "HAS_TIMEOUT=yes"; else echo "HAS_TIMEOUT=no"; fi',
     'SNIFF_PATH=',
     'echo "DSH_SNIFF<<EOF"',
-    'for D in "$HOME/.local/bin" "$HOME/bin" "$HOME/.npm-global/bin" /usr/local/bin /opt/homebrew/bin /snap/bin; do if [ -x "$D/dsh" ]; then printf "%s\\n" "$D/dsh"; if [ -z "$SNIFF_PATH" ]; then SNIFF_PATH="$D/dsh"; fi; fi; done',
+    'for D in "$HOME/.local/bin" "$HOME/bin" "$HOME/.npm-global/bin" /usr/local/bin /usr/bin /usr/sbin /bin /opt/homebrew/bin /snap/bin; do if [ -x "$D/dsh" ]; then printf "%s\\n" "$D/dsh"; if [ -z "$SNIFF_PATH" ]; then SNIFF_PATH="$D/dsh"; fi; fi; done',
     'echo "EOF"',
     'LOGIN_DSH=',
-    'if command -v timeout >/dev/null 2>&1 && command -v bash >/dev/null 2>&1; then LOGIN_DSH=$(timeout 5 bash -lc \'command -v dsh\' 2>/dev/null | head -n 1); fi',
+    'if command -v timeout >/dev/null 2>&1 && command -v bash >/dev/null 2>&1; then LOGIN_DSH=$(timeout 5 bash -lc \'command -v dsh\' 2>/dev/null | head -n 1); case "$LOGIN_DSH" in /*) ;; *) LOGIN_DSH=;; esac; fi',
     'printf "DSH_SNIFF_LOGIN=%s\\n" "$LOGIN_DSH"',
+    'RESOLVED_DSH=; if [ -n "$CONFIG_DSH_PATH" ] && [ -x "$CONFIG_DSH_PATH" ]; then RESOLVED_DSH="$CONFIG_DSH_PATH"; elif [ -n "$PATH_DSH" ] && [ -x "$PATH_DSH" ]; then RESOLVED_DSH="$PATH_DSH"; elif [ -n "$SNIFF_PATH" ]; then RESOLVED_DSH="$SNIFF_PATH"; elif [ -n "$LOGIN_DSH" ] && [ -x "$LOGIN_DSH" ]; then RESOLVED_DSH="$LOGIN_DSH"; fi',
+    'echo "DSH_BIN=${RESOLVED_DSH:-MISSING}"',
+    'if [ -n "$RESOLVED_DSH" ]; then echo "DSH_VERSION=$("$RESOLVED_DSH" --version 2>/dev/null | head -n 1)"; fi',
     'if [ -z "$SNIFF_PATH" ] && [ -n "$LOGIN_DSH" ]; then SNIFF_PATH="$LOGIN_DSH"; fi',
     'if command -v timeout >/dev/null 2>&1 && [ -n "$SNIFF_PATH" ]; then DSH_SNIFF_VERSION=$(timeout 5 "$SNIFF_PATH" --version 2>/dev/null | head -n 1); printf "DSH_SNIFF_VERSION=%s\\n" "$DSH_SNIFF_VERSION"; fi',
     'echo "RUNNING_DSH_WEB<<EOF"',
@@ -54,17 +70,55 @@ export function buildProbeScript() {
   ].join('; ');
 }
 
+/**
+ * /proc/net/tcp 的端口是十六进制，而 mawk 没有 strtonum，故自带可移植转换。
+ * 非法字符回 -1，落在端口区间校验之外，等同于「未探到」。
+ */
+const AWK_HEX2DEC = 'function hex2dec(s, i, c, v, d) { v = 0; s = toupper(s);'
+  + ' for (i = 1; i <= length(s); i++) { c = substr(s, i, 1);'
+  + ' d = index("0123456789ABCDEF", c) - 1; if (d < 0) return -1; v = v * 16 + d }'
+  + ' return v }';
+
+/** 发现 --port 0/缺失端口的手动 dsh web 实例实际监听端口。 */
+export function buildManualPortProbeScript(pids) {
+  if (!Array.isArray(pids) || pids.length === 0 || pids.length > 256) {
+    throw new DshError('VALIDATION', '手动实例 PID 列表无效');
+  }
+  const pidTokens = pids.map((pid) => assertInt(pid, { min: 1, max: 4_294_967_295 }));
+  return [
+    'echo "MANUAL_PORTS<<EOF"',
+    `for P in ${pidTokens.join(' ')}; do if command -v ss >/dev/null 2>&1; then ss -ltnp 2>/dev/null | awk -v p="$P" 'index($0, "pid=" p ",") || index($0, "pid=" p ")") { n=split($4,a,":"); port=a[n]; gsub(/[^0-9]/, "", port); if (port >= 1 && port <= 65535) print p "=" port; }'; elif command -v lsof >/dev/null 2>&1; then lsof -nP -a -p "$P" -iTCP -sTCP:LISTEN -F n 2>/dev/null | awk -v p="$P" '/^n/ { n=split($0,a,":"); port=a[n]; gsub(/[^0-9]/, "", port); if (port >= 1 && port <= 65535) print p "=" port; }'; elif [ -r /proc/net/tcp ]; then I=$(ls -l /proc/"$P"/fd 2>/dev/null | awk 'match($0, /socket:\\[[0-9]+\\]/) { print substr($0, RSTART + 8, RLENGTH - 9) }' | tr '\\n' ','); if [ -n "$I" ]; then cat /proc/net/tcp /proc/net/tcp6 2>/dev/null | awk -v p="$P" -v ino=",$I" '${AWK_HEX2DEC} $4=="0A" && index(ino, "," $10 ",") { n=split($2,a,":"); port=hex2dec(a[n]); if (port >= 1 && port <= 65535) print p "=" port; }'; fi; fi; done`,
+    'echo "EOF"',
+    'echo "MANUAL_PORTS_DONE=yes"',
+  ].join('; ');
+}
+
+/** 解析 MANUAL_PORTS 块；坏行丢弃，探测失败按未知处理。 */
+export function parseManualPortBlock(raw) {
+  const ports = new Map();
+  for (const line of String(raw ?? '').split('\n')) {
+    const match = /^\s*(\d+)=(\d{1,5})\s*$/.exec(line);
+    if (!match) continue;
+    const pid = Number(match[1]);
+    const port = Number(match[2]);
+    if (pid > 0 && port >= 1 && port <= 65535) ports.set(pid, port);
+  }
+  return ports;
+}
+
 // ── §1.2 拉起协议 ────────────────────────────────────────────────────────
 
 /**
- * @param {{logName:string, port:number|'0', env?:Record<string,string>,
+ * @param {{logName:string, port:number|'0', dshPath:string, env?:Record<string,string>,
  *          patchRemoteNames?:string[], extraArgs?:string[], workdir?:string|null}} p
  */
 export function buildLaunchScript({
-  logName, port, env = {}, patchRemoteNames = [], extraArgs = [], workdir = null,
+  logName, port, dshPath, env = {}, patchRemoteNames = [], extraArgs = [], workdir = null,
 }) {
   assertSafeName(logName);
   const portTok = assertInt(port, { min: 1, max: 65535, allowZero: true });
+  const dshTok = dshPathToken(dshPath);
+  if (!dshTok) throw new DshError('VALIDATION', '拉起协议缺少已解析的 dsh 绝对路径');
 
   let envp = '';
   const envEntries = Object.entries(env);
@@ -98,7 +152,7 @@ export function buildLaunchScript({
   // --patch 是 dsh 启动器自己的旗标，必须紧跟 `web` 排在 web app 旗标之前：真机
   // （dsh 0.1.0-rc.7）上 `dsh web --no-open ... --patch P` 会被 web app 判为
   // unknown option '--patch' 而直接退出。extraArgs 反过来是 app 参数，仍留在尾部。
-  const launch = `nohup ${envp}dsh web${patchArgs} --no-open --host 127.0.0.1 --port ${portTok}${extra} > "$LOG" 2>&1 < /dev/null &`;
+  const launch = `nohup ${envp}${dshTok} web${patchArgs} --no-open --host 127.0.0.1 --port ${portTok}${extra} > "$LOG" 2>&1 < /dev/null &`;
   return `${prelude}; ${launch} echo "PID=$!"`;
 }
 
@@ -129,8 +183,17 @@ export function parseLaunchUrl(url) {
 // ── §1.3 复核与停止协议 ──────────────────────────────────────────────────
 
 /**
+ * 内核 /proc/net/tcp 的 local_address 端口写法：大写四位十六进制。
+ * assertInt 返回的是已校验的字符串，这里显式转数值再取十六进制。
+ */
+function portHex(port) {
+  return Number(port).toString(16).toUpperCase().padStart(4, '0');
+}
+
+/**
  * ALIVE（PID 存活）+ ARGS 块（指纹，manager 侧全等比对）+ LISTEN 三态
- * （ss 非必然存在，unknown 不作否定证据）+ CWD（进程实际工作目录）。
+ * （ss 与 /proc/net/tcp 均不可得时才 unknown，unknown 不作否定证据）
+ * + CWD（进程实际工作目录）。
  *
  * CWD 是 best-effort 的**展示与诊断**字段：/proc 不存在或无权读时回 unknown。
  * 它绝不进不误杀判据集——判据只有 PID 存活与 ARGS 逐字全等（12 §1.3）。
@@ -141,7 +204,7 @@ export function buildVerifyScript({ pid, port }) {
   return [
     `A=$(ps -p ${pidTok} -o args= 2>/dev/null)`,
     'if [ -n "$A" ]; then echo "ALIVE=yes"; echo "ARGS<<EOF"; printf \'%s\\n\' "$A"; echo "EOF"; else echo "ALIVE=no"; fi',
-    `if command -v ss >/dev/null 2>&1; then if ss -ltn 2>/dev/null | grep -q ":${portTok} "; then echo "LISTEN=yes"; else echo "LISTEN=no"; fi; else echo "LISTEN=unknown"; fi`,
+    `if command -v ss >/dev/null 2>&1; then if ss -ltn 2>/dev/null | grep -q ":${portTok} "; then echo "LISTEN=yes"; else echo "LISTEN=no"; fi; elif [ -r /proc/net/tcp ]; then if cat /proc/net/tcp /proc/net/tcp6 2>/dev/null | awk -v h="${portHex(portTok)}" '$4=="0A" { n=split($2,a,":"); if (toupper(a[n])==h) f=1 } END { exit f?0:1 }'; then echo "LISTEN=yes"; else echo "LISTEN=no"; fi; else echo "LISTEN=unknown"; fi`,
     `if [ -r /proc/${pidTok}/cwd ]; then printf 'CWD=%s\\n' "$(readlink /proc/${pidTok}/cwd 2>/dev/null || echo unknown)"; else echo "CWD=unknown"; fi`,
     'echo "VERIFY_DONE=yes"',
   ].join('; ');

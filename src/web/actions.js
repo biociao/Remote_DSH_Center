@@ -11,6 +11,7 @@ import { phaseMeta } from './utils.js';
 
 const CALL = {
   start: api.startHost,
+  adopt: api.adoptHost,
   stop: api.stopHost,
   restart: api.restartHost,
   reconnect: api.reconnectHost,
@@ -21,6 +22,11 @@ const NEEDS_CONFIRM = new Set(['stop', 'restart']);
 export const CONFIG_SYNC_TARGET_LIMIT = 200;
 export const HOST_WEB_RESTART_NOTICE = '需重启此主机的 dsh web（重启 manager 无效）';
 const HOST_RESTART_PHASES = new Set(['running', 'degraded', 'starting']);
+const ORPHANED_ACTION_MESSAGE = 'ssh config 已消失，远程动作已禁用';
+
+function isOrphaned(host) {
+  return Boolean(host && !host.local && host.orphaned);
+}
 
 function workdirChangePending(patch, hostBeforeSave, savedHost) {
   if (!Object.hasOwn(patch, 'workdir') || !HOST_RESTART_PHASES.has(savedHost?.phase)) {
@@ -136,6 +142,10 @@ export function createActions({ store, confirm, navigate }) {
       store.addToast({ level: 'warn', summary: `主机 ${name} 不存在或尚未同步` });
       return null;
     }
+    if (isOrphaned(host) && action !== 'open') {
+      store.addToast({ level: 'warn', summary: `${name}：${ORPHANED_ACTION_MESSAGE}` });
+      return null;
+    }
     // 点击前重新读 store：自动恢复可能已经跑在手动重连之前（10 §7 第 12 条）
     if (action === 'reconnect' && host.phase === 'running') {
       store.addToast({ level: 'info', summary: `${name} 隧道已自行恢复，无需重连` });
@@ -157,6 +167,33 @@ export function createActions({ store, confirm, navigate }) {
       if (!ok) return null;
     }
 
+    if (action === 'start') {
+      return guarded({
+        action,
+        host: name,
+        run: () => CALL.start(name),
+        onError: async (toast) => {
+          if (toast.code !== 'ADOPTION_AVAILABLE') return;
+          store.dismissToast(toast.id);
+          const choice = await confirm({
+            title: `主机 ${name} 已有手动 dsh web`,
+            lines: [
+              '只读领养只登记现有进程并建立映射，不会停止或重启它。',
+              '强拉会启动第二个实例；取消则保持当前状态。',
+            ],
+            confirmLabel: '只读领养',
+            secondaryLabel: '强拉第二份',
+            cancelLabel: '取消',
+            danger: false,
+          });
+          if (choice === true) {
+            await guarded({ action: 'adopt', host: name, run: () => CALL.adopt(name) });
+          } else if (choice === 'secondary') {
+            await guarded({ action: 'start', host: name, run: () => CALL.start(name, { forceNew: true }) });
+          }
+        },
+      });
+    }
     return guarded({ action, host: name, run: () => CALL[action](name) });
   }
 
@@ -235,6 +272,16 @@ export function createActions({ store, confirm, navigate }) {
       });
       return null;
     }
+    const sourceHost = store.getHost(source);
+    const orphanedTarget = [sourceHost, ...targets.map((name) => store.getHost(name))]
+      .find(isOrphaned);
+    if (orphanedTarget) {
+      store.addToast({
+        level: 'warn',
+        summary: `${orphanedTarget.name}：${ORPHANED_ACTION_MESSAGE}`,
+      });
+      return null;
+    }
     let hostMergeGuard = null;
     const res = await guarded({
       action: 'config:sync',
@@ -270,6 +317,11 @@ export function createActions({ store, confirm, navigate }) {
   }
 
   async function loadDshSettings(name, { onError } = {}) {
+    const host = store.getHost(name);
+    if (isOrphaned(host)) {
+      store.addToast({ level: 'warn', summary: `${name}：${ORPHANED_ACTION_MESSAGE}` });
+      return null;
+    }
     return guarded({
       action: 'settings:load',
       host: name,
@@ -281,6 +333,11 @@ export function createActions({ store, confirm, navigate }) {
   }
 
   async function saveDshSettings(name, payload, { onError } = {}) {
+    const host = store.getHost(name);
+    if (isOrphaned(host)) {
+      store.addToast({ level: 'warn', summary: `${name}：${ORPHANED_ACTION_MESSAGE}` });
+      return null;
+    }
     return guarded({
       action: 'settings:save',
       host: name,
@@ -291,6 +348,11 @@ export function createActions({ store, confirm, navigate }) {
   }
 
   async function registerDshWorkspace(name, { onError } = {}) {
+    const host = store.getHost(name);
+    if (isOrphaned(host)) {
+      store.addToast({ level: 'warn', summary: `${name}：${ORPHANED_ACTION_MESSAGE}` });
+      return null;
+    }
     const res = await guarded({
       action: 'workspace:register',
       host: name,
@@ -335,6 +397,34 @@ export function createActions({ store, confirm, navigate }) {
         detail: res.changed.length > 0 ? res.changed.join('\n') : null,
       });
     }
+    return res;
+  }
+
+  async function clearOrphaned() {
+    const count = store.listHosts().filter(isOrphaned).length;
+    if (count === 0) return null;
+    const ok = await confirm({
+      title: `清空 ${count} 台 orphaned 主机？`,
+      lines: [
+        '只会删除 config 中当前 SSH 配置已消失的主机条目，并清理 manager 运行记录。',
+        '不会停止或删除远端 dsh web 进程；恢复 SSH 配置后可重新纳管。',
+      ],
+      confirmLabel: '清空 orphaned',
+    });
+    if (!ok) return null;
+    const res = await guarded({
+      action: 'orphaned:clear',
+      settleOnResolve: true,
+      run: () => api.clearOrphaned(),
+    });
+    if (!res || !Array.isArray(res.removed)) return res;
+    const removed = store.removeHosts(res.removed);
+    store.addToast({
+      level: 'success',
+      summary: removed.length > 0
+        ? `已清空 ${removed.length} 台 orphaned 主机`
+        : '没有需要清空的 orphaned 主机',
+    });
     return res;
   }
 
@@ -399,6 +489,7 @@ export function createActions({ store, confirm, navigate }) {
     registerDshWorkspace,
     saveDefaults,
     reload,
+    clearOrphaned,
     restartManager,
     openHost,
     openHostDrawer,
