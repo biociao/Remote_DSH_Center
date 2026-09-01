@@ -150,6 +150,8 @@ export function buildHostPatch(raw) {
       inject: { env: env.value, extraArgs: parseLines(raw.extraArgs), patches: patches.value },
     },
   };
+  if (Object.hasOwn(raw, 'dshPath')) value.dshPath = dshPath.value;
+  return { ok: true, value };
 }
 
 /** 全局默认表单 → PUT /api/config/defaults 请求体。 */
@@ -179,6 +181,9 @@ export function buildDefaultsPatch(raw, { minWidth = 1 } = {}) {
 export function diffPatch(patch, current) {
   const out = {};
   for (const [key, value] of Object.entries(patch)) {
+    const emptyDshPath = (value === null || value === undefined)
+      && (current?.[key] === null || current?.[key] === undefined || current?.[key] === '');
+    if (key === 'dshPath' && emptyDshPath) continue;
     if (!deepEqual(value, current?.[key])) out[key] = value;
   }
   return out;

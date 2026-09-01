@@ -187,6 +187,8 @@ const enc = encodeURIComponent;
 
 export const api = {
   managerInfo: () => call('GET', '/api/manager/info'),
+  sidecarStatus: () => call('GET', '/api/sidecar/status'),
+  fleetAnalysis: () => call('POST', '/api/analysis/fleet', { body: {} }),
   hosts: () => call('GET', '/api/hosts'),
   config: () => call('GET', '/api/config'),
 
@@ -199,7 +201,12 @@ export const api = {
   }),
   removeHosts: (hosts) => call('POST', '/api/hosts/remove', { body: { hosts } }),
   probeHost: (name) => call('POST', `/api/hosts/${enc(name)}/probe`),
-  startHost: (name) => call('POST', `/api/hosts/${enc(name)}/start`),
+  startHost: (name, { forceNew = false } = {}) => call('POST', `/api/hosts/${enc(name)}/start`, {
+    body: forceNew ? { forceNew: true } : {},
+  }),
+  adoptHost: (name, { pid = null, port = null } = {}) => call('POST', `/api/hosts/${enc(name)}/adopt`, {
+    body: { pid, port },
+  }),
   stopHost: (name) => call('POST', `/api/hosts/${enc(name)}/stop`),
   restartHost: (name) => call('POST', `/api/hosts/${enc(name)}/restart`),
   reconnectHost: (name) => call('POST', `/api/hosts/${enc(name)}/reconnect`),
@@ -243,6 +250,7 @@ export const api = {
   saveHostConfig: (name, patch) => call('PUT', `/api/hosts/${enc(name)}/config`, { body: patch }),
   saveDefaults: (patch) => call('PUT', '/api/config/defaults', { body: patch }),
   reload: () => call('POST', '/api/reload'),
+  clearOrphaned: () => call('POST', '/api/hosts/clear-orphaned'),
 
   setup: (config) => call('POST', '/api/setup', { body: config, timeoutMs: 30_000 }),
   restartManager: () => call('POST', '/api/manager/restart'),
